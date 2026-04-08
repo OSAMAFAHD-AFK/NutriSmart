@@ -1,15 +1,16 @@
 import { type Patient, getDiagnosisColor } from "@/lib/data";
-import { X, Edit, Phone, MapPin, Calendar, Ruler, Scale, Activity, User, AlertTriangle, Heart } from "lucide-react";
+import { X, Edit, MapPin, Scale, Activity, User, AlertTriangle, Heart, CalendarCheck } from "lucide-react";
 
 type Props = {
   patient: Patient;
   onEdit: (p: Patient) => void;
+  onEditWeeks: (p: Patient) => void;
   onClose: () => void;
 };
 
-function InfoRow({ label, value, className = "" }: { label: string; value: React.ReactNode; className?: string }) {
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className={`flex justify-between items-start py-2 border-b border-border/50 last:border-0 ${className}`}>
+    <div className="flex justify-between items-start py-2 border-b border-border/50 last:border-0">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="text-xs font-medium text-foreground text-right max-w-48">{value}</span>
     </div>
@@ -28,7 +29,6 @@ function WeekCard({ week, data, edema }: { week: string; data: Patient["week1"];
           <InfoRow label="MUAC" value={data.muac ? `${data.muac} cm` : "—"} />
           <InfoRow label="Edema" value={data.edema ? "Yes" : "No"} />
           <InfoRow label="RUTF" value={data.rutf ? `${data.rutf} sachets` : "—"} />
-          <InfoRow label="Z-Score" value={data.zScore ?? "—"} />
           <InfoRow label="Supplements" value={data.supplements || "—"} />
         </div>
       )}
@@ -36,28 +36,22 @@ function WeekCard({ week, data, edema }: { week: string; data: Patient["week1"];
   );
 }
 
-export default function PatientDetailModal({ patient: p, onEdit, onClose }: Props) {
+export default function PatientDetailModal({ patient: p, onEdit, onEditWeeks, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-card border border-card-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto">
+      <div className="bg-card border border-card-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-card z-10">
+        <div className="flex items-center justify-between p-5 border-b border-border shrink-0">
           <h2 className="text-base font-bold text-foreground">Patient Profile</h2>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => onEdit(p)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors"
-              data-testid="button-edit-patient"
-            >
-              <Edit size={12} /> Edit Patient
-            </button>
-            <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-close-detail">
-              <X size={18} className="text-muted-foreground" />
-            </button>
-          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-close-detail">
+            <X size={18} className="text-muted-foreground" />
+          </button>
         </div>
 
-        <div className="p-5 space-y-5">
+        {/* Scrollable Body */}
+        <div className="overflow-y-auto flex-1 p-5 space-y-5">
+
           {/* Profile Header */}
           <div className="flex items-start gap-4">
             <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-border bg-muted shrink-0">
@@ -102,7 +96,7 @@ export default function PatientDetailModal({ patient: p, onEdit, onClose }: Prop
             <div className="flex items-start gap-3 p-3 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900">
               <AlertTriangle size={16} className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
               <div className="text-sm font-medium text-red-700 dark:text-red-400">
-                This case must be referred to hospital immediately — Edema present
+                This patient has Edema — must be referred to hospital immediately. Weekly follow-up tracking is disabled.
               </div>
             </div>
           )}
@@ -182,7 +176,37 @@ export default function PatientDetailModal({ patient: p, onEdit, onClose }: Prop
               <WeekCard week="Week 4" data={p.week4} edema={p.edema} />
             </div>
           </div>
+
         </div>
+
+        {/* Footer — action buttons always visible */}
+        <div className="flex items-center justify-end gap-3 p-4 border-t border-border shrink-0 bg-card">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-muted transition-colors"
+          >
+            Close
+          </button>
+          {!p.edema && (
+            <button
+              onClick={() => onEditWeeks(p)}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm"
+              data-testid="button-edit-weeks"
+            >
+              <CalendarCheck size={14} />
+              Edit 4 Weeks
+            </button>
+          )}
+          <button
+            onClick={() => onEdit(p)}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-sm"
+            data-testid="button-edit-patient"
+          >
+            <Edit size={14} />
+            Edit Patient Info
+          </button>
+        </div>
+
       </div>
     </div>
   );
