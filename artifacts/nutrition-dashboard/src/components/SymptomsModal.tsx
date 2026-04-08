@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Activity } from "lucide-react";
+import { X, Activity, ArrowLeft } from "lucide-react";
 import { type Patient, SYMPTOMS_OPTIONS } from "@/lib/data";
 
 type Props = {
@@ -22,8 +22,9 @@ export default function SymptomsModal({ patient, onSave, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-card border border-card-border rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="flex items-center justify-between p-5 border-b border-border">
+      <div className="bg-card border border-card-border rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-border shrink-0">
           <div>
             <h2 className="text-base font-bold text-foreground flex items-center gap-2">
               <Activity size={16} className="text-primary" />
@@ -36,8 +37,9 @@ export default function SymptomsModal({ patient, onSave, onClose }: Props) {
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
-          <p className="text-xs text-muted-foreground">Select all symptoms that apply to this patient:</p>
+        {/* Scrollable list */}
+        <div className="overflow-y-auto flex-1 p-5">
+          <p className="text-xs text-muted-foreground mb-3">Select all symptoms that apply to this patient:</p>
           <div className="flex flex-col gap-2">
             {SYMPTOMS_OPTIONS.map((s) => (
               <label
@@ -55,17 +57,27 @@ export default function SymptomsModal({ patient, onSave, onClose }: Props) {
               </label>
             ))}
           </div>
+        </div>
 
-          <div className="flex items-center justify-between pt-2 border-t border-border">
-            <span className="text-xs text-muted-foreground">{selected.length} symptom(s) selected</span>
-            <div className="flex gap-3">
-              <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-muted transition-colors">
-                Cancel
-              </button>
-              <button type="button" onClick={handleSave} className="px-5 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-sm" data-testid="button-save-symptoms">
-                Save Symptoms
-              </button>
-            </div>
+        {/* Footer */}
+        <div className="flex items-center justify-between p-5 border-t border-border shrink-0">
+          <span className="text-xs text-muted-foreground">{selected.length} symptom(s) selected</span>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-muted transition-colors"
+            >
+              <ArrowLeft size={14} /> Back
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-5 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-sm"
+              data-testid="button-save-symptoms"
+            >
+              Save Symptoms
+            </button>
           </div>
         </div>
       </div>

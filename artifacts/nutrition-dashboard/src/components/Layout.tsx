@@ -1,12 +1,25 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, BarChart3, Menu, X, Activity, Moon, Sun, Shield } from "lucide-react";
+import { LayoutDashboard, Users, BarChart3, Menu, X, Activity, Moon, Sun } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/patients", label: "Patients", icon: Users },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
+
+function NutriSmartLogo() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="32" height="32" rx="8" fill="#10b981" />
+      <path d="M16 6C16 6 8 12 8 18C8 22.4183 11.5817 26 16 26C20.4183 26 24 22.4183 24 18C24 12 16 6 16 6Z" fill="white" fillOpacity="0.95" />
+      <path d="M16 10C16 10 12 14 12 18C12 20.2091 13.7909 22 16 22C18.2091 22 20 20.2091 20 18C20 14 16 10 16 10Z" fill="#10b981" />
+      <path d="M16 14C16 14 14 16 14 18C14 19.1046 14.8954 20 16 20C17.1046 20 18 19.1046 18 18C18 16 16 14 16 14Z" fill="white" fillOpacity="0.9" />
+      <path d="M20 9L22 7" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M22 12L25 11" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 type Props = {
   children: React.ReactNode;
@@ -22,21 +35,19 @@ export default function Layout({ children, darkMode, onToggleDark }: Props) {
     href === "/" ? location === "/" : location.startsWith(href);
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="h-screen flex overflow-hidden bg-background">
       {/* Sidebar — Desktop */}
-      <aside className="hidden lg:flex flex-col w-60 shrink-0 bg-sidebar border-r border-sidebar-border">
-        <div className="p-4 border-b border-sidebar-border">
+      <aside className="hidden lg:flex flex-col w-60 shrink-0 bg-sidebar border-r border-sidebar-border h-full">
+        <div className="p-4 border-b border-sidebar-border shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
-              <Shield size={16} className="text-sidebar-primary-foreground" />
-            </div>
+            <NutriSmartLogo />
             <div>
-              <div className="text-sm font-bold text-sidebar-foreground leading-tight">YNS</div>
+              <div className="text-sm font-bold text-sidebar-foreground leading-tight">NutriSmart</div>
               <div className="text-[10px] text-sidebar-foreground/60 leading-tight">Nutrition Monitoring</div>
             </div>
           </div>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.href}
@@ -49,7 +60,7 @@ export default function Layout({ children, darkMode, onToggleDark }: Props) {
             </Link>
           ))}
         </nav>
-        <div className="p-3 border-t border-sidebar-border">
+        <div className="p-3 border-t border-sidebar-border shrink-0">
           <div className="px-3 py-2">
             <div className="text-[10px] text-sidebar-foreground/40 uppercase tracking-wide mb-1">Organization</div>
             <div className="text-xs text-sidebar-foreground/70">WHO / MSF / UNICEF</div>
@@ -73,11 +84,9 @@ export default function Layout({ children, darkMode, onToggleDark }: Props) {
           <aside className="fixed top-0 left-0 h-full w-64 bg-sidebar border-r border-sidebar-border z-50 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-sidebar-border">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center">
-                  <Shield size={16} className="text-sidebar-primary-foreground" />
-                </div>
+                <NutriSmartLogo />
                 <div>
-                  <div className="text-sm font-bold text-sidebar-foreground">YNS</div>
+                  <div className="text-sm font-bold text-sidebar-foreground">NutriSmart</div>
                   <div className="text-[10px] text-sidebar-foreground/60">Nutrition Monitoring</div>
                 </div>
               </div>
@@ -85,7 +94,7 @@ export default function Layout({ children, darkMode, onToggleDark }: Props) {
                 <X size={18} />
               </button>
             </div>
-            <nav className="flex-1 p-3 space-y-1">
+            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
               {NAV_ITEMS.map((item) => (
                 <Link
                   key={item.href}
@@ -102,10 +111,10 @@ export default function Layout({ children, darkMode, onToggleDark }: Props) {
         </div>
       )}
 
-      {/* Main */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Bar */}
-        <header className="h-14 border-b border-border flex items-center gap-3 px-4 bg-card/50 backdrop-blur-sm sticky top-0 z-30">
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+        {/* Top Bar — always visible */}
+        <header className="h-14 border-b border-border flex items-center gap-3 px-4 bg-card/50 backdrop-blur-sm shrink-0 z-30">
           <button
             onClick={() => setSidebarOpen(true)}
             className="lg:hidden p-2 rounded-lg hover:bg-muted transition-colors"
@@ -114,7 +123,7 @@ export default function Layout({ children, darkMode, onToggleDark }: Props) {
             <Menu size={18} className="text-foreground" />
           </button>
           <div className="flex-1">
-            <span className="text-sm font-semibold text-foreground hidden sm:block">Yemen Nutrition Monitoring System</span>
+            <span className="text-sm font-semibold text-foreground hidden sm:block">NutriSmart — Yemen Nutrition Monitoring System</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
@@ -134,8 +143,8 @@ export default function Layout({ children, darkMode, onToggleDark }: Props) {
           </div>
         </header>
 
-        {/* Page Content */}
-        <main className="flex-1 p-4 md:p-6 overflow-auto">
+        {/* Scrollable page content */}
+        <main className="flex-1 overflow-auto p-4 md:p-5">
           {children}
         </main>
       </div>

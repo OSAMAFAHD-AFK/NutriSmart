@@ -1,6 +1,6 @@
 {
-  "name": "Yemen Nutrition Monitoring System",
-  "short_name": "YNS",
+  "name": "NutriSmart — Yemen Nutrition Monitoring",
+  "short_name": "NutriSmart",
   "description": "Digital malnutrition tracking system for NGOs and health organizations in Yemen",
   "start_url": "/",
   "display": "standalone",
