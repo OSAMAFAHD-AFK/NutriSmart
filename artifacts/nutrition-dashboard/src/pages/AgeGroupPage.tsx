@@ -4,14 +4,15 @@ import {
   loadPatients, savePatients, type Patient,
   getDiagnosisColor, getPercentageColor, calcPercentageForPatient,
 } from "@/lib/data";
-import { AGE_GROUPS, type AgeGroupId, formatAge } from "@/lib/ageGroups";
+import { AGE_GROUPS, type AgeGroupId, formatAge, loadSponsors, saveSponsor, getDefaultSponsorName } from "@/lib/ageGroups";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
 import {
-  Plus, Search, AlertCircle, Users, Baby, Filter,
+  Plus, Search, AlertCircle, Users,
   BarChart3, TableIcon, Building2, TrendingUp, Skull, Heart, ArrowLeft,
+  Pencil, Check, X as XIcon,
 } from "lucide-react";
 import PatientModal from "@/components/PatientModal";
 import PatientDetailModal from "@/components/PatientDetailModal";
@@ -52,10 +53,36 @@ export default function AgeGroupPage() {
   const [weeklyPatient, setWeeklyPatient] = useState<Patient | null>(null);
   const [symptomsPatient, setSymptomsPatient] = useState<Patient | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [sponsorName, setSponsorName] = useState("");
+  const [isEditingSponsor, setIsEditingSponsor] = useState(false);
+  const [editValue, setEditValue] = useState("");
 
   useEffect(() => {
     setPatients(loadPatients());
   }, []);
+
+  useEffect(() => {
+    if (groupId) {
+      const sponsors = loadSponsors();
+      setSponsorName(sponsors[groupId] ?? getDefaultSponsorName(groupId));
+    }
+  }, [groupId]);
+
+  function handleSponsorEdit() {
+    setEditValue(sponsorName);
+    setIsEditingSponsor(true);
+  }
+
+  function handleSponsorSave() {
+    const trimmed = editValue.trim() || getDefaultSponsorName(groupId);
+    setSponsorName(trimmed);
+    saveSponsor(groupId, trimmed);
+    setIsEditingSponsor(false);
+  }
+
+  function handleSponsorCancel() {
+    setIsEditingSponsor(false);
+  }
 
   if (!group) {
     return (
@@ -180,13 +207,42 @@ export default function AgeGroupPage() {
             </div>
           </div>
 
-          {/* Donor/Sponsor Badge */}
-          <div className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border ${group.bgClass} ${group.borderClass} shrink-0`}>
-            <Building2 size={14} className={group.textClass} />
-            <div>
-              <div className="text-xs text-muted-foreground">Supported by</div>
-              <div className={`text-sm font-bold ${group.textClass}`}>{group.sponsor}</div>
-              <div className="text-xs text-muted-foreground">{group.sponsorSub}</div>
+          {/* Donor/Sponsor Badge — editable */}
+          <div className={`flex items-start gap-2.5 px-4 py-2.5 rounded-xl border ${group.bgClass} ${group.borderClass} shrink-0 max-w-xs`}>
+            <Building2 size={14} className={`${group.textClass} shrink-0 mt-1`} />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-muted-foreground mb-0.5">Supported by</div>
+              {isEditingSponsor ? (
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSponsorSave(); if (e.key === "Escape") handleSponsorCancel(); }}
+                    autoFocus
+                    className="text-sm w-full rounded-md border border-border bg-card text-foreground px-2 py-1 focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="Donor / organization name"
+                  />
+                  <div className="flex gap-1">
+                    <button onClick={handleSponsorSave} className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-primary text-primary-foreground font-medium hover:opacity-90">
+                      <Check size={11} /> Save
+                    </button>
+                    <button onClick={handleSponsorCancel} className="flex items-center gap-1 px-2 py-1 rounded text-xs border border-border text-muted-foreground hover:bg-muted">
+                      <XIcon size={11} /> Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-1.5">
+                  <div className={`text-sm font-bold ${group.textClass} break-words min-w-0`}>{sponsorName}</div>
+                  <button
+                    onClick={handleSponsorEdit}
+                    className="shrink-0 p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors mt-0.5"
+                    title="Edit donor name"
+                  >
+                    <Pencil size={11} className="text-muted-foreground" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

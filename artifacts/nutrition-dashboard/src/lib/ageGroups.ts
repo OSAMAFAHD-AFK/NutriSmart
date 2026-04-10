@@ -90,3 +90,42 @@ export function getAgeGroupId(ageMonths: number): AgeGroupId | null {
   if (ageMonths < 216) return "5-18";
   return null;
 }
+
+export function formatAgeAuto(ageMonths: number): string {
+  if (ageMonths < 24) return `${ageMonths}M`;
+  const years = Math.floor(ageMonths / 12);
+  const months = ageMonths % 12;
+  return months === 0 ? `${years}y` : `${years}y ${months}m`;
+}
+
+const SPONSORS_STORAGE_KEY = "yns_sponsors_v1";
+
+export function getDefaultSponsorName(groupId: AgeGroupId): string {
+  const g = AGE_GROUPS[groupId];
+  return `${g.sponsor} — ${g.sponsorSub}`;
+}
+
+export function loadSponsors(): Record<AgeGroupId, string> {
+  try {
+    const stored = localStorage.getItem(SPONSORS_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return {
+        "0-2": parsed["0-2"] ?? getDefaultSponsorName("0-2"),
+        "2-5": parsed["2-5"] ?? getDefaultSponsorName("2-5"),
+        "5-18": parsed["5-18"] ?? getDefaultSponsorName("5-18"),
+      };
+    }
+  } catch {}
+  return {
+    "0-2": getDefaultSponsorName("0-2"),
+    "2-5": getDefaultSponsorName("2-5"),
+    "5-18": getDefaultSponsorName("5-18"),
+  };
+}
+
+export function saveSponsor(groupId: AgeGroupId, name: string): void {
+  const current = loadSponsors();
+  current[groupId] = name;
+  localStorage.setItem(SPONSORS_STORAGE_KEY, JSON.stringify(current));
+}

@@ -1,21 +1,25 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { loadPatients, type Patient } from "@/lib/data";
-import { AGE_GROUP_LIST, type AgeGroupConfig, getAgeGroupId } from "@/lib/ageGroups";
+import {
+  AGE_GROUP_LIST, AGE_GROUPS, type AgeGroupConfig, type AgeGroupId,
+  loadSponsors, formatAgeAuto,
+} from "@/lib/ageGroups";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, LineChart, Line,
 } from "recharts";
 import {
   Users, AlertTriangle, TrendingUp, Heart, Skull, RefreshCw,
-  Wifi, WifiOff, ArrowRight, Building2, Activity,
+  Wifi, WifiOff, ArrowRight, Building2, Activity, MapPin, ChevronDown,
 } from "lucide-react";
 
 const WEEK_LABELS = ["Week 1", "Week 2", "Week 3", "Week 4"];
 const PIE_COLORS = ["#3b82f6", "#ec4899"];
-const GOV_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
 
-function StatCard({ label, value, icon, color, sub }: { label: string; value: string | number; icon: React.ReactNode; color: string; sub?: string }) {
+function StatCard({ label, value, icon, color, sub }: {
+  label: string; value: string | number; icon: React.ReactNode; color: string; sub?: string;
+}) {
   return (
     <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
       <div className={`w-9 h-9 rounded-lg ${color} flex items-center justify-center mb-3`}>{icon}</div>
@@ -26,7 +30,9 @@ function StatCard({ label, value, icon, color, sub }: { label: string; value: st
   );
 }
 
-function AgeGroupCard({ group, patients, onClick }: { group: AgeGroupConfig; patients: Patient[]; onClick: () => void }) {
+function AgeGroupCard({ group, patients, sponsorName, onClick }: {
+  group: AgeGroupConfig; patients: Patient[]; sponsorName: string; onClick: () => void;
+}) {
   const gPatients = patients.filter((p) => p.ageMonths >= group.minMonths && p.ageMonths < group.maxMonths);
   const sam = gPatients.filter((p) => p.diagnosis === "SAM").length;
   const mam = gPatients.filter((p) => p.diagnosis === "MAM").length;
@@ -39,10 +45,8 @@ function AgeGroupCard({ group, patients, onClick }: { group: AgeGroupConfig; pat
       onClick={onClick}
       className={`group relative flex flex-col text-left w-full rounded-2xl border-2 ${group.borderClass} ${group.bgClass} p-6 hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 overflow-hidden`}
     >
-      {/* Background emoji watermark */}
       <div className="absolute -right-2 -top-2 text-7xl opacity-10 select-none pointer-events-none">{group.emoji}</div>
 
-      {/* Header */}
       <div className="flex items-start justify-between mb-4">
         <div>
           <div className={`text-3xl font-black ${group.textClass}`}>{group.emoji}</div>
@@ -54,7 +58,6 @@ function AgeGroupCard({ group, patients, onClick }: { group: AgeGroupConfig; pat
         </div>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-3 gap-2 mb-4">
         <div className="bg-white/60 dark:bg-black/20 rounded-lg p-2 text-center">
           <div className="text-lg font-bold text-red-600 dark:text-red-400">{sam}</div>
@@ -70,7 +73,6 @@ function AgeGroupCard({ group, patients, onClick }: { group: AgeGroupConfig; pat
         </div>
       </div>
 
-      {/* Malnutrition bar */}
       <div className="mb-4">
         <div className="flex justify-between text-xs text-muted-foreground mb-1">
           <span>Malnutrition Rate</span>
@@ -84,15 +86,11 @@ function AgeGroupCard({ group, patients, onClick }: { group: AgeGroupConfig; pat
         </div>
       </div>
 
-      {/* Sponsor */}
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-4 min-w-0">
         <Building2 size={12} className="text-muted-foreground shrink-0" />
-        <span className="text-xs text-muted-foreground truncate">
-          <span className="font-semibold">{group.sponsor}</span> — {group.sponsorSub}
-        </span>
+        <span className="text-xs text-muted-foreground truncate font-medium">{sponsorName}</span>
       </div>
 
-      {/* CTA */}
       <div className={`flex items-center justify-between pt-3 border-t ${group.borderClass}`}>
         <span className={`text-sm font-semibold ${group.textClass}`}>View Patients & Analytics</span>
         <div className={`w-8 h-8 rounded-lg ${group.badgeBg} flex items-center justify-center group-hover:translate-x-1 transition-transform`}>
@@ -103,15 +101,124 @@ function AgeGroupCard({ group, patients, onClick }: { group: AgeGroupConfig; pat
   );
 }
 
+function CriticalCasesFrame({ patients }: { patients: Patient[] }) {
+  const edemaPatients = useMemo(() => patients.filter((p) => p.edema && !p.isDeceased), [patients]);
+  const [govFilter, setGovFilter] = useState("All");
+
+  const govs = useMemo(() => {
+    const unique = Array.from(new Set(edemaPatients.map((p) => p.governorate))).sort();
+    return ["All", ...unique];
+  }, [edemaPatients]);
+
+  const filtered = useMemo(
+    () => govFilter === "All" ? edemaPatients : edemaPatients.filter((p) => p.governorate === govFilter),
+    [edemaPatients, govFilter]
+  );
+
+  if (edemaPatients.length === 0) return null;
+
+  function getAgeGroupLabel(ageMonths: number): { emoji: string; label: string } {
+    if (ageMonths < 24) return { emoji: "👶", label: "0–2 Yrs (UNICEF)" };
+    if (ageMonths < 60) return { emoji: "🧒", label: "2–5 Yrs (WHO)" };
+    return { emoji: "👦", label: "5–18 Yrs (WFP)" };
+  }
+
+  return (
+    <div className="rounded-2xl border-2 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 p-5 shrink-0">
+      {/* Frame Header */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-red-600 flex items-center justify-center shadow-sm">
+            <AlertTriangle size={18} className="text-white" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-red-800 dark:text-red-300">Critical Cases — Edema Patients</h3>
+            <p className="text-xs text-red-600 dark:text-red-400">
+              {filtered.length} patient{filtered.length !== 1 ? "s" : ""} require immediate hospital referral
+            </p>
+          </div>
+          <span className="bg-red-600 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
+            {edemaPatients.length}
+          </span>
+        </div>
+
+        {/* City Filter */}
+        <div className="relative">
+          <select
+            value={govFilter}
+            onChange={(e) => setGovFilter(e.target.value)}
+            className="appearance-none text-sm rounded-lg border border-red-300 dark:border-red-700 bg-white dark:bg-red-950/40 text-foreground px-3 py-1.5 pr-8 focus:outline-none focus:ring-2 focus:ring-red-400 font-medium cursor-pointer"
+          >
+            {govs.map((g) => <option key={g} value={g}>{g === "All" ? "All Cities" : g}</option>)}
+          </select>
+          <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+        </div>
+      </div>
+
+      {/* Patient Cards Grid */}
+      {filtered.length === 0 ? (
+        <div className="text-center text-red-500 text-sm py-6">No critical cases in {govFilter}.</div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {filtered.map((p) => {
+            const ageLabel = getAgeGroupLabel(p.ageMonths);
+            const displayAge = formatAgeAuto(p.ageMonths);
+            return (
+              <div
+                key={p.id}
+                className="bg-white dark:bg-card border border-red-200 dark:border-red-900 rounded-xl p-3.5 shadow-sm flex flex-col gap-2"
+              >
+                {/* Name + ID */}
+                <div>
+                  <div className="text-sm font-bold text-foreground leading-tight">{p.name}</div>
+                  <div className="text-xs font-mono text-muted-foreground mt-0.5">{p.id}</div>
+                </div>
+
+                {/* Location + Vitals */}
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1">
+                    <MapPin size={10} className="shrink-0 text-red-500" />
+                    <span className="font-medium text-foreground">{p.governorate}</span>
+                    <span>—</span>
+                    <span>{p.district}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span>MUAC: <span className="font-semibold text-red-600 dark:text-red-400">{p.muac} cm</span></span>
+                    <span>Age: <span className="font-semibold text-foreground">{displayAge}</span></span>
+                  </div>
+                </div>
+
+                {/* Age Group Label + REFER NOW */}
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-xs text-muted-foreground">
+                    {ageLabel.emoji} {ageLabel.label}
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 text-white text-xs font-bold tracking-wide shadow-sm animate-pulse">
+                    🚨 REFER NOW
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [lastSync, setLastSync] = useState("Never");
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [sponsors, setSponsors] = useState<Record<AgeGroupId, string>>({
+    "0-2": "", "2-5": "", "5-18": "",
+  });
   const [, navigate] = useLocation();
 
   useEffect(() => {
     setPatients(loadPatients());
+    setSponsors(loadSponsors());
     const up = () => setIsOnline(true);
     const down = () => setIsOnline(false);
     window.addEventListener("online", up);
@@ -124,13 +231,13 @@ export default function Dashboard() {
     setTimeout(() => {
       setIsSyncing(false);
       setLastSync(new Date().toLocaleTimeString());
+      setSponsors(loadSponsors());
     }, 1800);
   }
 
   const sam = patients.filter((p) => p.diagnosis === "SAM").length;
   const mam = patients.filter((p) => p.diagnosis === "MAM").length;
   const recovered = patients.filter((p) => p.diagnosis === "Recovered").length;
-  const normal = patients.filter((p) => p.diagnosis === "Normal").length;
   const deaths = patients.filter((p) => p.isDeceased).length;
   const recoveryRate = patients.length > 0 ? ((recovered / patients.length) * 100).toFixed(1) : "0";
 
@@ -157,8 +264,6 @@ export default function Dashboard() {
     const avg = muacs.length ? parseFloat((muacs.reduce((a, b) => a + b, 0) / muacs.length).toFixed(2)) : 0;
     return { label, avgMuac: avg };
   }), [patients]);
-
-  const edemaPatients = patients.filter((p) => p.edema && !p.isDeceased);
 
   return (
     <div className="flex flex-col gap-5 h-full overflow-auto pb-4">
@@ -207,12 +312,11 @@ export default function Dashboard() {
               key={group.id}
               group={group}
               patients={patients}
+              sponsorName={sponsors[group.id] || `${group.sponsor} — ${group.sponsorSub}`}
               onClick={() => navigate(`/group/${group.id}`)}
             />
           ))}
         </div>
-
-        {/* All Patients link */}
         <button
           onClick={() => navigate("/patients")}
           className="mt-3 w-full flex items-center justify-between px-5 py-4 rounded-xl border border-border bg-card hover:bg-muted/50 transition-colors shadow-sm group"
@@ -229,6 +333,9 @@ export default function Dashboard() {
           <ArrowRight size={16} className="text-muted-foreground group-hover:translate-x-1 transition-transform" />
         </button>
       </div>
+
+      {/* ── Critical Cases Frame ── */}
+      <CriticalCasesFrame patients={patients} />
 
       {/* ── Charts Row ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
@@ -262,7 +369,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Weekly MUAC Trend */}
+      {/* ── Weekly MUAC Trend ── */}
       <div className="bg-card border border-border rounded-xl p-4 shadow-sm shrink-0">
         <h3 className="text-sm font-semibold text-foreground mb-4">Average MUAC Trend — Weekly Progress (All Patients)</h3>
         <ResponsiveContainer width="100%" height={180}>
@@ -275,21 +382,6 @@ export default function Dashboard() {
           </LineChart>
         </ResponsiveContainer>
       </div>
-
-      {/* Edema Alert */}
-      {edemaPatients.length > 0 && (
-        <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900 shrink-0">
-          <AlertTriangle size={18} className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-          <div>
-            <div className="text-sm font-semibold text-red-700 dark:text-red-400">Critical Alert — {edemaPatients.length} Edema Case(s) Require Immediate Hospital Referral</div>
-            <div className="text-xs text-red-600 dark:text-red-400 mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
-              {edemaPatients.map((p) => (
-                <span key={p.id} className="font-medium">{p.name} ({p.governorate})</span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
