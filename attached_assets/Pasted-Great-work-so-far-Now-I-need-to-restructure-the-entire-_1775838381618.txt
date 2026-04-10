@@ -1,0 +1,118 @@
+Great work so far. Now I need to restructure the entire patient management system based on age groups. Apply the following changes carefully without breaking existing functionality:
+
+--------------------------------------------------
+
+1. SPLIT PATIENTS INTO AGE GROUPS (CORE CHANGE):
+
+Currently, all patients are in one table.
+
+I want to divide them into 4 sections:
+
+1. Age 0–2 years
+2. Age 2–5 years
+3. Age 5–18 years
+4. All Patients (existing full table – keep it)
+
+Each group must have:
+- Separate table
+- Separate page/view
+- Separate analytics
+
+--------------------------------------------------
+
+2. WHY THIS CHANGE (IMPORTANT CONTEXT):
+
+- WFH (Weight-for-Height) values differ by age
+- NGOs may fund specific age groups only
+- Each group must be independently managed and analyzed
+
+--------------------------------------------------
+
+3. NAVIGATION (VERY IMPORTANT UX):
+
+Instead of only accessing patients from the sidebar:
+
+Create a clean dashboard entry point with 4 large buttons/cards:
+
+- “0–2 Years”
+- “2–5 Years”
+- “5–18 Years”
+- “All Patients”
+
+Each button leads to its respective table and analytics.
+
+Make the design modern, clean, and visually strong.
+
+--------------------------------------------------
+
+4. DONOR / ORGANIZATION LABEL:
+
+Above each age group page:
+
+- Add a label or header showing:
+  “Supported by: [Organization Name]”
+
+- This should be editable or dynamic (can be mock data)
+
+Example:
+“Supported by: UNICEF – Children Under 2 Program”
+
+--------------------------------------------------
+
+5. AGE DISPLAY FORMAT:
+
+- For 0–2 years:
+  - Show age in MONTHS
+  - Add “M” (e.g., 18M)
+
+- For 2–5 and 5–18:
+  - Show age in YEARS
+
+--------------------------------------------------
+
+6. TABLE STRUCTURE:
+
+- All 3 age-based tables should have the same structure
+- Keep existing columns and logic
+- Only adjust age format per group
+
+--------------------------------------------------
+
+7. ANALYTICS RESTRUCTURE:
+
+Currently analytics are global.
+
+Change this to:
+
+- Each age group has its own analytics:
+  - Total patients
+  - SAM / MAM / Normal
+  - Deaths
+  - Regional distribution
+
+- Keep:
+  “All Patients” analytics as overall summary
+
+--------------------------------------------------
+
+8. DATA FILTERING LOGIC:
+
+- Patients must automatically go into the correct group based on age
+- No duplication errors
+- All Patients view includes everyone (0–18)
+
+--------------------------------------------------
+
+9. DESIGN GOAL:
+
+Make the system feel like a real NGO platform where:
+- Each age group is managed independently
+- Donors can track their specific programs
+- Data is clean, separated, and easy to analyze
+
+--------------------------------------------------
+
+IMPORTANT:
+- Do NOT break existing functionality
+- Reuse current UI where possible
+- Focus on clean structure and clarity

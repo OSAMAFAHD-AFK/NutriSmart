@@ -135,6 +135,16 @@ const BASE_DATA = [
   { name: "Hana Ibrahim Al-Badawi", father: "Ibrahim Salem Al-Badawi", phone: "+967 733 890 123", gender: "F" as const, dob: "2021-04-17", weight: 8.8, height: 83, muac: 13.4, gov: "Abyan", dist: "Zinjibar", edema: false, deceased: false },
   { name: "Mohammed Ali Al-Ansi", father: "Ali Mohammed Al-Ansi", phone: "+967 777 901 234", gender: "M" as const, dob: "2020-12-30", weight: 5.6, height: 71, muac: 11.1, gov: "Taiz", dist: "Mawiyah", edema: false, deceased: false },
   { name: "Amira Nasser Al-Dhahri", father: "Nasser Omar Al-Dhahri", phone: "+967 712 012 345", gender: "F" as const, dob: "2023-05-22", weight: 5.9, height: 73, muac: 10.3, gov: "Hajjah", dist: "Mustaba", edema: false, deceased: false },
+  { name: "Sara Hamid Al-Qahtani", father: "Hamid Ali Al-Qahtani", phone: "+967 777 111 222", gender: "F" as const, dob: "2025-01-15", weight: 4.2, height: 60, muac: 10.5, gov: "Hajjah", dist: "Abs", edema: false, deceased: false },
+  { name: "Anas Mohammed Al-Ruqaishi", father: "Mohammed Anas Al-Ruqaishi", phone: "+967 711 222 333", gender: "M" as const, dob: "2024-08-20", weight: 5.1, height: 65, muac: 9.8, gov: "Hodeidah", dist: "Bajil", edema: true, deceased: false },
+  { name: "Lina Omar Al-Shahari", father: "Omar Said Al-Shahari", phone: "+967 733 333 444", gender: "F" as const, dob: "2024-11-10", weight: 3.8, height: 57, muac: 11.2, gov: "Taiz", dist: "Al Mudhaffar", edema: false, deceased: false },
+  { name: "Rami Saeed Al-Mahrami", father: "Saeed Rami Al-Mahrami", phone: "+967 777 444 555", gender: "M" as const, dob: "2025-03-05", weight: 3.5, height: 54, muac: 10.8, gov: "Aden", dist: "Mansoura", edema: false, deceased: false },
+  { name: "Jana Ibrahim Al-Humaiqani", father: "Ibrahim Salim Al-Humaiqani", phone: "+967 712 555 666", gender: "F" as const, dob: "2024-06-18", weight: 5.8, height: 68, muac: 11.4, gov: "Ibb", dist: "Ibb City", edema: false, deceased: false },
+  { name: "Zaid Khalil Al-Dawsari", father: "Khalil Ahmed Al-Dawsari", phone: "+967 733 666 777", gender: "M" as const, dob: "2024-09-30", weight: 4.5, height: 62, muac: 10.1, gov: "Sana'a", dist: "Hamdan", edema: true, deceased: false },
+  { name: "Nada Yusuf Al-Raymi", father: "Yusuf Mohammed Al-Raymi", phone: "+967 777 777 888", gender: "F" as const, dob: "2025-02-08", weight: 3.2, height: 52, muac: 9.5, gov: "Marib", dist: "Serwah", edema: false, deceased: false },
+  { name: "Faris Ali Al-Dhahabi", father: "Ali Faris Al-Dhahabi", phone: "+967 711 888 999", gender: "M" as const, dob: "2018-03-12", weight: 18.5, height: 112, muac: 14.2, gov: "Hajjah", dist: "Haradh", edema: false, deceased: false },
+  { name: "Marwa Hassan Al-Sabri", father: "Hassan Marwa Al-Sabri", phone: "+967 733 999 000", gender: "F" as const, dob: "2016-07-25", weight: 22.1, height: 125, muac: 13.8, gov: "Hodeidah", dist: "Al Hali", edema: false, deceased: false },
+  { name: "Qasim Ahmed Al-Saqaf", father: "Ahmed Qasim Al-Saqaf", phone: "+967 777 000 111", gender: "M" as const, dob: "2017-11-14", weight: 16.8, height: 108, muac: 12.1, gov: "Taiz", dist: "Salh", edema: false, deceased: false },
 ];
 
 const MEDICATIONS = ["Amoxicillin + Vit A", "Amoxicillin + Zinc", "Cotrimoxazole + Vit A", "Mebendazole + Vit A", "Amoxicillin only"];
@@ -207,7 +217,7 @@ function generatePatients(): Patient[] {
   });
 }
 
-const STORAGE_KEY = "yns_patients_v2";
+const STORAGE_KEY = "yns_patients_v3";
 
 export function loadPatients(): Patient[] {
   try {

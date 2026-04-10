@@ -7,6 +7,7 @@ import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Patients from "@/pages/Patients";
 import Analytics from "@/pages/Analytics";
+import AgeGroupPage from "@/pages/AgeGroupPage";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -16,6 +17,7 @@ function Router({ darkMode, onToggleDark }: { darkMode: boolean; onToggleDark: (
     <Layout darkMode={darkMode} onToggleDark={onToggleDark}>
       <Switch>
         <Route path="/" component={Dashboard} />
+        <Route path="/group/:groupId" component={AgeGroupPage} />
         <Route path="/patients" component={Patients} />
         <Route path="/analytics" component={Analytics} />
         <Route component={NotFound} />

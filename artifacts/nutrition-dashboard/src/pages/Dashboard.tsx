@@ -1,264 +1,295 @@
-import { useState, useEffect } from "react";
-import { loadPatients, type Patient, type Diagnosis } from "@/lib/data";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from "recharts";
-import { Users, AlertTriangle, Activity, TrendingUp, TrendingDown, Heart, RefreshCw, Wifi, WifiOff, Skull } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { useLocation } from "wouter";
+import { loadPatients, type Patient } from "@/lib/data";
+import { AGE_GROUP_LIST, type AgeGroupConfig, getAgeGroupId } from "@/lib/ageGroups";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend, LineChart, Line,
+} from "recharts";
+import {
+  Users, AlertTriangle, TrendingUp, Heart, Skull, RefreshCw,
+  Wifi, WifiOff, ArrowRight, Building2, Activity,
+} from "lucide-react";
 
-type StatCardProps = {
-  title: string;
-  value: number | string;
-  icon: React.ReactNode;
-  color: string;
-  bgColor: string;
-  change?: string;
-  changeType?: "up" | "down";
-};
+const WEEK_LABELS = ["Week 1", "Week 2", "Week 3", "Week 4"];
+const PIE_COLORS = ["#3b82f6", "#ec4899"];
+const GOV_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
 
-function StatCard({ title, value, icon, color, bgColor, change, changeType }: StatCardProps) {
+function StatCard({ label, value, icon, color, sub }: { label: string; value: string | number; icon: React.ReactNode; color: string; sub?: string }) {
   return (
-    <div className="bg-card border border-card-border rounded-xl p-5 shadow-sm hover:shadow-md transition-all duration-200">
-      <div className="flex items-center justify-between mb-3">
-        <div className={`w-10 h-10 rounded-lg ${bgColor} flex items-center justify-center`}>
-          <div className={color}>{icon}</div>
-        </div>
-        {change && (
-          <div className={`flex items-center gap-1 text-xs font-medium ${changeType === "up" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-            {changeType === "up" ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-            {change}
-          </div>
-        )}
-      </div>
-      <div className="text-2xl font-bold text-foreground mb-1">{value}</div>
-      <div className="text-sm text-muted-foreground">{title}</div>
+    <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
+      <div className={`w-9 h-9 rounded-lg ${color} flex items-center justify-center mb-3`}>{icon}</div>
+      <div className="text-2xl font-bold text-foreground">{value}</div>
+      <div className="text-sm text-muted-foreground">{label}</div>
+      {sub && <div className="text-xs text-muted-foreground/70 mt-0.5">{sub}</div>}
     </div>
   );
 }
 
-const REGION_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
+function AgeGroupCard({ group, patients, onClick }: { group: AgeGroupConfig; patients: Patient[]; onClick: () => void }) {
+  const gPatients = patients.filter((p) => p.ageMonths >= group.minMonths && p.ageMonths < group.maxMonths);
+  const sam = gPatients.filter((p) => p.diagnosis === "SAM").length;
+  const mam = gPatients.filter((p) => p.diagnosis === "MAM").length;
+  const recovered = gPatients.filter((p) => p.diagnosis === "Recovered").length;
+  const total = gPatients.length;
+  const malnutRate = total > 0 ? Math.round(((sam + mam) / total) * 100) : 0;
 
-const WEEK_LABELS = ["Week 1", "Week 2", "Week 3", "Week 4"];
+  return (
+    <button
+      onClick={onClick}
+      className={`group relative flex flex-col text-left w-full rounded-2xl border-2 ${group.borderClass} ${group.bgClass} p-6 hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 overflow-hidden`}
+    >
+      {/* Background emoji watermark */}
+      <div className="absolute -right-2 -top-2 text-7xl opacity-10 select-none pointer-events-none">{group.emoji}</div>
+
+      {/* Header */}
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <div className={`text-3xl font-black ${group.textClass}`}>{group.emoji}</div>
+          <h3 className={`text-xl font-bold mt-1 ${group.textClass}`}>{group.label}</h3>
+          <p className="text-sm text-muted-foreground">{group.description}</p>
+        </div>
+        <div className={`shrink-0 w-12 h-12 rounded-xl ${group.badgeBg} flex items-center justify-center shadow-sm`}>
+          <span className="text-white text-lg font-bold">{total}</span>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-2 mb-4">
+        <div className="bg-white/60 dark:bg-black/20 rounded-lg p-2 text-center">
+          <div className="text-lg font-bold text-red-600 dark:text-red-400">{sam}</div>
+          <div className="text-xs text-muted-foreground">SAM</div>
+        </div>
+        <div className="bg-white/60 dark:bg-black/20 rounded-lg p-2 text-center">
+          <div className="text-lg font-bold text-orange-600 dark:text-orange-400">{mam}</div>
+          <div className="text-xs text-muted-foreground">MAM</div>
+        </div>
+        <div className="bg-white/60 dark:bg-black/20 rounded-lg p-2 text-center">
+          <div className="text-lg font-bold text-green-600 dark:text-green-400">{recovered}</div>
+          <div className="text-xs text-muted-foreground">Recovered</div>
+        </div>
+      </div>
+
+      {/* Malnutrition bar */}
+      <div className="mb-4">
+        <div className="flex justify-between text-xs text-muted-foreground mb-1">
+          <span>Malnutrition Rate</span>
+          <span className={`font-semibold ${malnutRate > 50 ? "text-red-600" : malnutRate > 25 ? "text-orange-600" : "text-green-600"}`}>{malnutRate}%</span>
+        </div>
+        <div className="h-2 bg-white/50 dark:bg-black/20 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full ${malnutRate > 50 ? "bg-red-500" : malnutRate > 25 ? "bg-orange-500" : "bg-green-500"}`}
+            style={{ width: `${malnutRate}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Sponsor */}
+      <div className="flex items-center gap-2 mb-4">
+        <Building2 size={12} className="text-muted-foreground shrink-0" />
+        <span className="text-xs text-muted-foreground truncate">
+          <span className="font-semibold">{group.sponsor}</span> — {group.sponsorSub}
+        </span>
+      </div>
+
+      {/* CTA */}
+      <div className={`flex items-center justify-between pt-3 border-t ${group.borderClass}`}>
+        <span className={`text-sm font-semibold ${group.textClass}`}>View Patients & Analytics</span>
+        <div className={`w-8 h-8 rounded-lg ${group.badgeBg} flex items-center justify-center group-hover:translate-x-1 transition-transform`}>
+          <ArrowRight size={14} className="text-white" />
+        </div>
+      </div>
+    </button>
+  );
+}
 
 export default function Dashboard() {
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [lastSync, setLastSync] = useState<string>("Never");
+  const [lastSync, setLastSync] = useState("Never");
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [, navigate] = useLocation();
 
   useEffect(() => {
     setPatients(loadPatients());
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
+    const up = () => setIsOnline(true);
+    const down = () => setIsOnline(false);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => { window.removeEventListener("online", up); window.removeEventListener("offline", down); };
   }, []);
 
-  const total = patients.length;
-  const sam = patients.filter((p) => p.diagnosis === "SAM").length;
-  const mam = patients.filter((p) => p.diagnosis === "MAM").length;
-  const recovered = patients.filter((p) => p.diagnosis === "Recovered").length;
-  const deceased = patients.filter((p) => p.isDeceased).length;
-  const normal = patients.filter((p) => p.diagnosis === "Normal").length;
-  const deathRate = total > 0 ? ((deceased / total) * 100).toFixed(1) : "0.0";
-  const recoveryRate = total > 0 ? ((recovered / total) * 100).toFixed(1) : "0.0";
-
-  const regionMap: Record<string, { SAM: number; MAM: number; Normal: number; Recovered: number; Deceased: number }> = {};
-  patients.forEach((p) => {
-    if (!regionMap[p.governorate]) regionMap[p.governorate] = { SAM: 0, MAM: 0, Normal: 0, Recovered: 0, Deceased: 0 };
-    const d = p.diagnosis as keyof typeof regionMap[string];
-    if (d in regionMap[p.governorate]) regionMap[p.governorate][d]++;
-  });
-  const regionData = Object.entries(regionMap)
-    .map(([name, v]) => ({ name, ...v, total: v.SAM + v.MAM + v.Normal + v.Recovered + v.Deceased }))
-    .sort((a, b) => b.total - a.total);
-
-  const genderData = [
-    { name: "Male", value: patients.filter((p) => p.gender === "M").length, color: "#3b82f6" },
-    { name: "Female", value: patients.filter((p) => p.gender === "F").length, color: "#ec4899" },
-  ];
-
-  const diagnosisData = [
-    { name: "SAM", value: sam, color: "#ef4444" },
-    { name: "MAM", value: mam, color: "#f59e0b" },
-    { name: "Recovered", value: recovered, color: "#10b981" },
-    { name: "Normal", value: normal, color: "#3b82f6" },
-    { name: "Deceased", value: deceased, color: "#6b7280" },
-  ];
-
-  const weeklyTrend = WEEK_LABELS.map((label, wi) => {
-    const weightSum = patients.reduce((acc, p) => {
-      const w = [p.week1, p.week2, p.week3, p.week4][wi];
-      return acc + (w.weight ?? 0);
-    }, 0);
-    const muacSum = patients.reduce((acc, p) => {
-      const w = [p.week1, p.week2, p.week3, p.week4][wi];
-      return acc + (w.muac ?? 0);
-    }, 0);
-    return {
-      label,
-      avgWeight: patients.length ? parseFloat((weightSum / patients.length).toFixed(2)) : 0,
-      avgMuac: patients.length ? parseFloat((muacSum / patients.length).toFixed(2)) : 0,
-    };
-  });
-
-  const handleSync = () => {
+  function handleSync() {
     setIsSyncing(true);
     setTimeout(() => {
       setIsSyncing(false);
       setLastSync(new Date().toLocaleTimeString());
-    }, 2000);
-  };
+    }, 1800);
+  }
+
+  const sam = patients.filter((p) => p.diagnosis === "SAM").length;
+  const mam = patients.filter((p) => p.diagnosis === "MAM").length;
+  const recovered = patients.filter((p) => p.diagnosis === "Recovered").length;
+  const normal = patients.filter((p) => p.diagnosis === "Normal").length;
+  const deaths = patients.filter((p) => p.isDeceased).length;
+  const recoveryRate = patients.length > 0 ? ((recovered / patients.length) * 100).toFixed(1) : "0";
+
+  const govData = useMemo(() => {
+    const map: Record<string, { name: string; SAM: number; MAM: number; Recovered: number; Normal: number }> = {};
+    patients.forEach((p) => {
+      if (!map[p.governorate]) map[p.governorate] = { name: p.governorate, SAM: 0, MAM: 0, Recovered: 0, Normal: 0 };
+      if (p.diagnosis === "SAM") map[p.governorate].SAM++;
+      else if (p.diagnosis === "MAM") map[p.governorate].MAM++;
+      else if (p.diagnosis === "Recovered") map[p.governorate].Recovered++;
+      else map[p.governorate].Normal++;
+    });
+    return Object.values(map);
+  }, [patients]);
+
+  const genderData = useMemo(() => [
+    { name: "Male", value: patients.filter((p) => p.gender === "M").length },
+    { name: "Female", value: patients.filter((p) => p.gender === "F").length },
+  ], [patients]);
+
+  const weeklyData = useMemo(() => WEEK_LABELS.map((label, wi) => {
+    const key = `week${wi + 1}` as "week1" | "week2" | "week3" | "week4";
+    const muacs = patients.filter((p) => !p.edema && p[key].muac).map((p) => p[key].muac as number);
+    const avg = muacs.length ? parseFloat((muacs.reduce((a, b) => a + b, 0) / muacs.length).toFixed(2)) : 0;
+    return { label, avgMuac: avg };
+  }), [patients]);
+
+  const edemaPatients = patients.filter((p) => p.edema && !p.isDeceased);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="flex flex-col gap-5 h-full overflow-auto pb-4">
+      {/* ── Top Bar ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Overview Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">Yemen Nutrition Monitoring System — Real-time malnutrition tracking</p>
+          <p className="text-sm text-muted-foreground mt-0.5">NutriSmart — Real-time malnutrition tracking across all age groups</p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-full border ${isOnline ? "text-green-700 bg-green-50 border-green-200 dark:text-green-400 dark:bg-green-950/30 dark:border-green-900" : "text-red-700 bg-red-50 border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900"}`}>
-            {isOnline ? <Wifi size={12} /> : <WifiOff size={12} />}
-            {isOnline ? "Online" : "Offline Mode"}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium border ${isOnline ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-400 dark:border-green-800" : "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-800"}`}>
+            {isOnline ? <Wifi size={11} /> : <WifiOff size={11} />}
+            {isOnline ? "Online" : "Offline"}
           </div>
           <button
             onClick={handleSync}
             disabled={isSyncing}
-            className="flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-60"
-            data-testid="button-sync"
+            className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity shadow-sm disabled:opacity-60"
           >
-            <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-            {isSyncing ? "Syncing..." : "Sync Data"}
+            <RefreshCw size={12} className={isSyncing ? "animate-spin" : ""} />
+            {isSyncing ? "Syncing…" : "Sync Data"}
           </button>
-          {lastSync !== "Never" && (
-            <span className="text-xs text-muted-foreground">Last sync: {lastSync}</span>
-          )}
+          {lastSync !== "Never" && <span className="text-xs text-muted-foreground">Last: {lastSync}</span>}
         </div>
       </div>
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
-        <StatCard title="Total Patients" value={total} icon={<Users size={18} />} color="text-blue-600 dark:text-blue-400" bgColor="bg-blue-50 dark:bg-blue-950/30" change="+3 this week" changeType="up" />
-        <StatCard title="SAM Cases" value={sam} icon={<AlertTriangle size={18} />} color="text-red-600 dark:text-red-400" bgColor="bg-red-50 dark:bg-red-950/30" change={`${((sam/total)*100).toFixed(0)}%`} changeType="down" />
-        <StatCard title="MAM Cases" value={mam} icon={<Activity size={18} />} color="text-orange-600 dark:text-orange-400" bgColor="bg-orange-50 dark:bg-orange-950/30" change={`${((mam/total)*100).toFixed(0)}%`} changeType="down" />
-        <StatCard title="Recovered" value={recovered} icon={<TrendingUp size={18} />} color="text-green-600 dark:text-green-400" bgColor="bg-green-50 dark:bg-green-950/30" change={`${recoveryRate}%`} changeType="up" />
-        <StatCard title="Normal" value={normal} icon={<Heart size={18} />} color="text-primary dark:text-primary" bgColor="bg-accent dark:bg-accent" />
-        <StatCard title="Deaths" value={deceased} icon={<Skull size={18} />} color="text-gray-600 dark:text-gray-400" bgColor="bg-gray-100 dark:bg-gray-800/50" change={`${deathRate}%`} changeType="down" />
-        <StatCard title="Recovery Rate" value={`${recoveryRate}%`} icon={<TrendingUp size={18} />} color="text-primary dark:text-primary" bgColor="bg-accent dark:bg-accent" change="+2.1% vs last month" changeType="up" />
+      {/* ── Global KPI Cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 shrink-0">
+        <StatCard label="Total Patients" value={patients.length} icon={<Users size={18} className="text-blue-600 dark:text-blue-400" />} color="bg-blue-100 dark:bg-blue-950/40" sub="+10 this month" />
+        <StatCard label="SAM Cases" value={sam} icon={<AlertTriangle size={18} className="text-red-600 dark:text-red-400" />} color="bg-red-100 dark:bg-red-950/40" />
+        <StatCard label="MAM Cases" value={mam} icon={<TrendingUp size={18} className="text-orange-600 dark:text-orange-400" />} color="bg-orange-100 dark:bg-orange-950/40" />
+        <StatCard label="Recovered" value={recovered} icon={<Heart size={18} className="text-green-600 dark:text-green-400" />} color="bg-green-100 dark:bg-green-950/40" />
+        <StatCard label="Deaths" value={deaths} icon={<Skull size={18} className="text-gray-600 dark:text-gray-400" />} color="bg-gray-100 dark:bg-gray-800" />
+        <StatCard label="Recovery Rate" value={`${recoveryRate}%`} icon={<Activity size={18} className="text-primary" />} color="bg-primary/10" />
       </div>
 
-      {/* Charts Row 1 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Cases by Region */}
-        <div className="lg:col-span-2 bg-card border border-card-border rounded-xl p-5 shadow-sm">
-          <h3 className="text-base font-semibold text-foreground mb-4">Cases by Governorate</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={regionData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(214 32% 91%)" opacity={0.5} />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{ borderRadius: 8, border: "1px solid hsl(214 32% 91%)", fontSize: 12 }}
-                />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="SAM" stackId="a" fill="#ef4444" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="MAM" stackId="a" fill="#f59e0b" />
-                <Bar dataKey="Recovered" stackId="a" fill="#10b981" />
-                <Bar dataKey="Normal" stackId="a" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      {/* ── Age Group Entry Cards ── */}
+      <div className="shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-bold text-foreground">Age Group Programs</h2>
+          <span className="text-xs text-muted-foreground">Click a group to view patients & analytics</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {AGE_GROUP_LIST.map((group) => (
+            <AgeGroupCard
+              key={group.id}
+              group={group}
+              patients={patients}
+              onClick={() => navigate(`/group/${group.id}`)}
+            />
+          ))}
         </div>
 
-        {/* Gender & Diagnosis */}
-        <div className="flex flex-col gap-4">
-          <div className="bg-card border border-card-border rounded-xl p-5 shadow-sm flex-1">
-            <h3 className="text-base font-semibold text-foreground mb-3">Gender Distribution</h3>
-            <div className="flex items-center gap-4">
-              <div className="w-28 h-28">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={genderData} dataKey="value" cx="50%" cy="50%" innerRadius={30} outerRadius={50}>
-                      {genderData.map((entry, i) => (
-                        <Cell key={i} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex flex-col gap-2">
-                {genderData.map((d) => (
-                  <div key={d.name} className="flex items-center gap-2 text-sm">
-                    <div className="w-3 h-3 rounded-sm" style={{ background: d.color }} />
-                    <span className="text-muted-foreground">{d.name}:</span>
-                    <span className="font-semibold text-foreground">{d.value}</span>
-                  </div>
-                ))}
-              </div>
+        {/* All Patients link */}
+        <button
+          onClick={() => navigate("/patients")}
+          className="mt-3 w-full flex items-center justify-between px-5 py-4 rounded-xl border border-border bg-card hover:bg-muted/50 transition-colors shadow-sm group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+              <Users size={18} className="text-muted-foreground" />
+            </div>
+            <div className="text-left">
+              <div className="text-sm font-bold text-foreground">All Patients</div>
+              <div className="text-xs text-muted-foreground">Complete registry — {patients.length} patients across all age groups</div>
             </div>
           </div>
-          <div className="bg-card border border-card-border rounded-xl p-5 shadow-sm flex-1">
-            <h3 className="text-base font-semibold text-foreground mb-3">Diagnosis Split</h3>
-            <div className="space-y-2">
-              {diagnosisData.map((d) => (
-                <div key={d.name} className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full" style={{ background: d.color }} />
-                  <span className="text-xs text-muted-foreground w-20">{d.name}</span>
-                  <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${total > 0 ? (d.value / total) * 100 : 0}%`, background: d.color }} />
-                  </div>
-                  <span className="text-xs font-semibold text-foreground w-6 text-right">{d.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+          <ArrowRight size={16} className="text-muted-foreground group-hover:translate-x-1 transition-transform" />
+        </button>
       </div>
 
-      {/* Weekly Trend */}
-      <div className="bg-card border border-card-border rounded-xl p-5 shadow-sm">
-        <h3 className="text-base font-semibold text-foreground mb-4">Weekly Progress Trend (Average Weight & MUAC)</h3>
-        <div className="h-52">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={weeklyTrend} margin={{ top: 0, right: 20, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(214 32% 91%)" opacity={0.5} />
-              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid hsl(214 32% 91%)", fontSize: 12 }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="avgWeight" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} name="Avg Weight (kg)" />
-              <Line type="monotone" dataKey="avgMuac" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} name="Avg MUAC (cm)" />
-            </LineChart>
+      {/* ── Charts Row ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
+        <div className="lg:col-span-2 bg-card border border-border rounded-xl p-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Cases by Governorate</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={govData} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.08} />
+              <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="SAM" stackId="a" fill="#ef4444" />
+              <Bar dataKey="MAM" stackId="a" fill="#f59e0b" />
+              <Bar dataKey="Normal" stackId="a" fill="#3b82f6" />
+              <Bar dataKey="Recovered" stackId="a" fill="#10b981" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Gender Distribution</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie data={genderData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, value }) => `${name}: ${value}`} labelLine={false}>
+                {genderData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i]} />)}
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Recent Critical */}
-      <div className="bg-card border border-card-border rounded-xl p-5 shadow-sm">
-        <h3 className="text-base font-semibold text-foreground mb-4">Critical Cases — Edema Patients</h3>
-        <div className="space-y-2">
-          {patients.filter((p) => p.edema && !p.isDeceased).map((p) => (
-            <div key={p.id} className="flex items-center gap-3 p-3 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900">
-              <AlertTriangle size={16} className="text-red-500 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-foreground">{p.name}</div>
-                <div className="text-xs text-muted-foreground">{p.governorate} — {p.district} · MUAC: {p.muac} cm · Age: {p.ageMonths} months</div>
-              </div>
-              <div className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400 border border-red-200 dark:border-red-800">
-                REFER NOW
-              </div>
-            </div>
-          ))}
-          {patients.filter((p) => p.edema && !p.isDeceased).length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">No critical edema cases at this time.</p>
-          )}
-        </div>
+      {/* Weekly MUAC Trend */}
+      <div className="bg-card border border-border rounded-xl p-4 shadow-sm shrink-0">
+        <h3 className="text-sm font-semibold text-foreground mb-4">Average MUAC Trend — Weekly Progress (All Patients)</h3>
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={weeklyData} margin={{ top: 0, right: 20, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.08} />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
+            <Tooltip formatter={(v: number) => [`${v} cm`, "Avg MUAC"]} />
+            <Line type="monotone" dataKey="avgMuac" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4, fill: "#10b981" }} />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
+
+      {/* Edema Alert */}
+      {edemaPatients.length > 0 && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900 shrink-0">
+          <AlertTriangle size={18} className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <div className="text-sm font-semibold text-red-700 dark:text-red-400">Critical Alert — {edemaPatients.length} Edema Case(s) Require Immediate Hospital Referral</div>
+            <div className="text-xs text-red-600 dark:text-red-400 mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
+              {edemaPatients.map((p) => (
+                <span key={p.id} className="font-medium">{p.name} ({p.governorate})</span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
