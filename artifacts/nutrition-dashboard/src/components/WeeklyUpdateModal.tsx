@@ -1,6 +1,23 @@
 import { useState } from "react";
-import { X, CalendarCheck } from "lucide-react";
-import { type Patient, calcRutfAmount } from "@/lib/data";
+import { ArrowDown, ArrowUp, Minus, X, CalendarCheck } from "lucide-react";
+import type { ClinicalEdemaGrade } from "@/lib/patientMedicalProfile";
+import {
+  createEmptyWeekData,
+  type Patient,
+  calcRutfAmount,
+  TREATMENT_WEEKS_COUNT,
+  FOLLOW_UP_OUTCOME_OPTIONS,
+  FOLLOW_UP_OUTCOME_DEATH,
+  withPatientDeathRecorded,
+  type FollowUpOutcome,
+  patientHasClinicalEdema,
+  isHeightCaptureWeekIndex,
+  WEEKLY_EDEMA_OPTIONS,
+  weightTrendVsPriorWeek,
+  normalizePatientRecord,
+  syncPatientAnthropometryFromTreatmentWeeks,
+} from "@/lib/data";
+import { heightMeasureFullLabel, isInfantUnder6Months } from "@/lib/patientTableAnthro";
 
 type Props = {
   patient: Patient;
@@ -8,61 +25,111 @@ type Props = {
   onClose: () => void;
 };
 
-type WeekKey = "week1" | "week2" | "week3" | "week4";
-const WEEKS: { key: WeekKey; label: string }[] = [
-  { key: "week1", label: "Week 1" },
-  { key: "week2", label: "Week 2" },
-  { key: "week3", label: "Week 3" },
-  { key: "week4", label: "Week 4" },
-];
+const WEEKS = Array.from({ length: TREATMENT_WEEKS_COUNT }, (_, index) => ({
+  key: index,
+  label: `Week ${index + 1}`,
+}));
+
+const WEEKLY_DISPOSITION_LABEL = "Weekly recovery disposition";
+const WEEKLY_DISPOSITION_HINT = "متابعة التعافي الأسبوعية";
 
 export default function WeeklyUpdateModal({ patient, onSave, onClose }: Props) {
-  const [selectedWeek, setSelectedWeek] = useState<WeekKey>("week1");
-  const weekData = patient[selectedWeek];
+  const [selectedWeek, setSelectedWeek] = useState(0);
+  const weekData = patient.treatmentWeeks[selectedWeek] ?? createEmptyWeekData();
+  const infant = isInfantUnder6Months(patient);
 
   const [weight, setWeight] = useState(weekData.weight?.toString() ?? "");
   const [muac, setMuac] = useState(weekData.muac?.toString() ?? "");
-  const [edema, setEdema] = useState(weekData.edema);
+  const [edemaGrade, setEdemaGrade] = useState<ClinicalEdemaGrade>(weekData.edemaGrade);
   const [height, setHeight] = useState(weekData.height?.toString() ?? "");
-  const [zScore, setZScore] = useState(weekData.zScore?.toString() ?? "");
   const [supplements, setSupplements] = useState(weekData.supplements ?? "");
+  const [followUpOutcome, setFollowUpOutcome] = useState<FollowUpOutcome>(weekData.followUpOutcome ?? "");
 
   const wNum = parseFloat(weight) || 0;
-  const rutf = wNum ? calcRutfAmount(wNum) : weekData.rutf ?? 0;
+  const rutf = !infant && wNum ? calcRutfAmount(wNum) : weekData.rutf ?? 0;
+  const showHeight = isHeightCaptureWeekIndex(selectedWeek);
+  const showDisposition = selectedWeek >= 1;
+  const weightTrend =
+    selectedWeek >= 1 ? weightTrendVsPriorWeek(patient.treatmentWeeks, selectedWeek) : "none";
 
-  function handleWeekChange(wk: WeekKey) {
+  function handleWeekChange(wk: number) {
     setSelectedWeek(wk);
-    const d = patient[wk];
+    const d = patient.treatmentWeeks[wk] ?? createEmptyWeekData();
     setWeight(d.weight?.toString() ?? "");
     setMuac(d.muac?.toString() ?? "");
-    setEdema(d.edema);
+    setEdemaGrade(d.edemaGrade);
     setHeight(d.height?.toString() ?? "");
-    setZScore(d.zScore?.toString() ?? "");
     setSupplements(d.supplements ?? "");
+    setFollowUpOutcome(d.followUpOutcome ?? "");
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const today = new Date().toISOString().split("T")[0];
-    const updated: Patient = {
+    const slot = patient.treatmentWeeks[selectedWeek] ?? createEmptyWeekData();
+    const outcomeForSave: FollowUpOutcome =
+      selectedWeek === 0 ? (slot.followUpOutcome ?? "") : followUpOutcome;
+    const treatmentWeeks = patient.treatmentWeeks.map((week, index) =>
+      index === selectedWeek
+        ? {
+            ...week,
+            weight: parseFloat(weight) || null,
+            muac: infant ? slot.muac : parseFloat(muac) || null,
+            edemaGrade,
+            rutf: infant ? null : wNum ? calcRutfAmount(wNum) : week.rutf,
+            height: showHeight ? parseFloat(height) || null : week.height,
+            zScore: null,
+            supplements,
+            followUpOutcome: outcomeForSave,
+          }
+        : week,
+    );
+    let updated: Patient = {
       ...patient,
       lastVisitDate: today,
-      [selectedWeek]: {
-        weight: parseFloat(weight) || null,
-        muac: parseFloat(muac) || null,
-        edema,
-        rutf,
-        height: parseFloat(height) || null,
-        zScore: parseFloat(zScore) || null,
-        supplements,
-      },
+      treatmentWeeks,
     };
-    onSave(updated);
+    if (outcomeForSave === FOLLOW_UP_OUTCOME_DEATH) {
+      updated = withPatientDeathRecorded(updated, today, selectedWeek);
+    }
+    onSave(syncPatientAnthropometryFromTreatmentWeeks(normalizePatientRecord(updated)));
   }
 
-  const inputCls = "w-full px-3 py-2 text-sm rounded-lg border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring";
+  const inputCls =
+    "w-full px-3 py-2 text-sm rounded-lg border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring";
 
-  if (patient.edema) {
+  function weightTrendBadge() {
+    const base =
+      "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border text-muted-foreground";
+    if (weightTrend === "up") {
+      return (
+        <div className={`${base} border-green-300 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/40 dark:text-green-400`}>
+          <ArrowUp className="h-5 w-5" strokeWidth={2.5} />
+        </div>
+      );
+    }
+    if (weightTrend === "down") {
+      return (
+        <div className={`${base} border-red-300 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400`}>
+          <ArrowDown className="h-5 w-5" strokeWidth={2.5} />
+        </div>
+      );
+    }
+    if (weightTrend === "flat") {
+      return (
+        <div className={`${base} border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300`}>
+          <Minus className="h-5 w-5" strokeWidth={2.5} />
+        </div>
+      );
+    }
+    return (
+      <div className={`${base} border-border bg-muted/40`}>
+        <span className="text-[10px] font-medium">—</span>
+      </div>
+    );
+  }
+
+  if (patientHasClinicalEdema(patient)) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
         <div className="bg-card border border-card-border rounded-2xl shadow-2xl w-full max-w-md p-6">
@@ -100,7 +167,6 @@ export default function WeeklyUpdateModal({ patient, onSave, onClose }: Props) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Week Selector */}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-2">Select Week</label>
             <div className="grid grid-cols-4 gap-2">
@@ -118,39 +184,85 @@ export default function WeeklyUpdateModal({ patient, onSave, onClose }: Props) {
             </div>
           </div>
 
-          {/* Fields */}
+          {infant && (
+            <p className="text-xs text-amber-800 dark:text-amber-200 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 px-2 py-1.5">
+              Under 6 months: MUAC and RUTF are not used outpatient — refer to hospital.
+            </p>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
-            <div>
+            <div className="col-span-2">
               <label className="block text-xs font-medium text-muted-foreground mb-1">Weight (kg)</label>
-              <input type="number" step="0.1" value={weight} onChange={(e) => setWeight(e.target.value)} className={inputCls} placeholder="7.2" data-testid="input-week-weight" />
+              <div className={`flex items-center ${selectedWeek >= 1 ? "gap-2" : ""}`}>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={weight}
+                  onChange={(e) => setWeight(e.target.value)}
+                  className={selectedWeek >= 1 ? `${inputCls} min-w-0 flex-1` : inputCls}
+                  placeholder="7.2"
+                  data-testid="input-week-weight"
+                />
+                {selectedWeek >= 1 ? weightTrendBadge() : null}
+              </div>
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">MUAC (cm)</label>
-              <input type="number" step="0.1" value={muac} onChange={(e) => setMuac(e.target.value)} className={inputCls} placeholder="11.8" data-testid="input-week-muac" />
+              <input type="number" step="0.1" value={muac} onChange={(e) => setMuac(e.target.value)} className={inputCls} placeholder="11.8" data-testid="input-week-muac" disabled={infant} />
             </div>
             <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Height (cm)</label>
-              <input type="number" step="0.5" value={height} onChange={(e) => setHeight(e.target.value)} className={inputCls} placeholder="75" data-testid="input-week-height" />
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Edema (this week)</label>
+              <select
+                className={inputCls}
+                value={edemaGrade}
+                onChange={(e) => setEdemaGrade(e.target.value as ClinicalEdemaGrade)}
+              >
+                {WEEKLY_EDEMA_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Z-Score</label>
-              <input type="number" step="0.1" value={zScore} onChange={(e) => setZScore(e.target.value)} className={inputCls} placeholder="-2.1" data-testid="input-week-zscore" />
-            </div>
+            {showHeight && (
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  {heightMeasureFullLabel(patient.ageMonths)} <span className="font-normal">(weeks 4, 8, 12)</span>
+                </label>
+                <input type="number" step="0.5" value={height} onChange={(e) => setHeight(e.target.value)} className={inputCls} placeholder="75" data-testid="input-week-height" />
+              </div>
+            )}
             <div className="col-span-2">
               <label className="block text-xs font-medium text-muted-foreground mb-1">Supplements</label>
               <input value={supplements} onChange={(e) => setSupplements(e.target.value)} className={inputCls} placeholder="Vit A + Zinc" data-testid="input-week-supplements" />
             </div>
+            {showDisposition && (
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  {WEEKLY_DISPOSITION_LABEL}
+                  <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground" dir="rtl">
+                    {WEEKLY_DISPOSITION_HINT}
+                  </span>
+                </label>
+                <select
+                  className={inputCls}
+                  value={followUpOutcome}
+                  onChange={(e) => setFollowUpOutcome(e.target.value as FollowUpOutcome)}
+                >
+                  {FOLLOW_UP_OUTCOME_OPTIONS.map((o, i) => (
+                    <option key={i} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="wk-edema" checked={edema} onChange={(e) => setEdema(e.target.checked)} className="w-4 h-4" data-testid="checkbox-week-edema" />
-            <label htmlFor="wk-edema" className="text-sm text-foreground">Edema present this week</label>
-          </div>
-
-          {wNum > 0 && (
+          {!infant && wNum > 0 && (
             <div className="p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
               Auto-calculated RUTF: <strong className="text-foreground">{rutf} sachets/day</strong>
-              <span className="ml-2 text-xs">(Formula: Weight × 200 / 500)</span>
+              <span className="ml-2 text-xs">(Formula: Weight × 200 / 500, rounded to nearest 0.5)</span>
             </div>
           )}
 

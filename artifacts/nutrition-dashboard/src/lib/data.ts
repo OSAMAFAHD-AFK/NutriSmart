@@ -1,20 +1,96 @@
+import {
+  type PatientMedicalHistory,
+  type ClinicalEdemaGrade,
+  mergeMedicalHistory,
+  type HealthCenterDistance,
+} from "./patientMedicalProfile";
+
 export type Diagnosis = "SAM" | "MAM" | "Normal" | "Recovered" | "Deceased";
+
+/** Weekly follow-up disposition (12-week plan). */
+export type FollowUpOutcome =
+  | ""
+  | "Continuing_treatment"
+  | "Absent"
+  | "Referred_hospital"
+  | "Refused_case"
+  | "Defaulted"
+  | "Recovered"
+  | "Death";
+
+export const FOLLOW_UP_OUTCOME_OPTIONS: { value: FollowUpOutcome; label: string }[] = [
+  { value: "", label: "—" },
+  { value: "Continuing_treatment", label: "SP - Continuing treatment" },
+  { value: "Absent", label: "AP - Absent" },
+  { value: "Referred_hospital", label: "REF - Referred to hospital" },
+  { value: "Refused_case", label: "RR - Refused case" },
+  { value: "Defaulted", label: "DEF - Defaulted / lost follow-up" },
+  { value: "Recovered", label: "C - Recovered" },
+  { value: "Death", label: "D - Death" },
+];
+
+/** 12-week grid: height/length captured only on weeks 4, 8, and 12 (1-based). */
+export const HEIGHT_CAPTURE_WEEK_INDEXES = [3, 7, 11] as const;
+
+export function isHeightCaptureWeekIndex(weekIndex: number): boolean {
+  return HEIGHT_CAPTURE_WEEK_INDEXES.includes(weekIndex as (typeof HEIGHT_CAPTURE_WEEK_INDEXES)[number]);
+}
+
+export const WEEKLY_EDEMA_OPTIONS: { value: ClinicalEdemaGrade; label: string }[] = [
+  { value: "None", label: "لا" },
+  { value: "+", label: "+" },
+  { value: "++", label: "++" },
+  { value: "+++", label: "+++" },
+];
+
+/** Same value as the weekly follow-up option `Death` — kept in sync with `isDeceased`. */
+export const FOLLOW_UP_OUTCOME_DEATH: FollowUpOutcome = "Death";
+
+/** Scanned treatment plans, labs, prescriptions, etc. (compressed data URLs). */
+export type PatientRecordAttachment = {
+  id: string;
+  title: string;
+  dataUrl: string;
+  createdAt: string;
+};
 
 export type WeekData = {
   weight: number | null;
   muac: number | null;
-  edema: boolean;
+  /** Weekly edema grade (same scale as medical history). Legacy stored `edema: boolean` maps to + / None on load. */
+  edemaGrade: ClinicalEdemaGrade;
   rutf: number | null;
   height: number | null;
+  /** Legacy field; no longer edited in UI — kept for stored JSON migration. */
   zScore: number | null;
   supplements: string;
+  followUpOutcome: FollowUpOutcome;
 };
+
+export type WeightTrendVsPrior = "up" | "down" | "flat" | "none";
+
+/** Compare current week weight to the previous week (week index 0 has no prior). */
+export function weightTrendVsPriorWeek(
+  weeks: Pick<WeekData, "weight">[],
+  weekIndex: number,
+  eps = 0.02,
+): WeightTrendVsPrior {
+  if (weekIndex < 1) return "none";
+  const cur = weeks[weekIndex]?.weight;
+  const prev = weeks[weekIndex - 1]?.weight;
+  if (cur == null || prev == null) return "none";
+  if (cur > prev + eps) return "up";
+  if (cur < prev - eps) return "down";
+  return "flat";
+}
 
 export type Patient = {
   id: string;
   name: string;
   fatherName: string;
   fatherPhone: string;
+  /** Mother / caregiver name (profile). */
+  motherName?: string;
   gender: "M" | "F";
   dateOfBirth: string;
   ageMonths: number;
@@ -27,20 +103,78 @@ export type Patient = {
   diagnosis: Diagnosis;
   governorate: string;
   district: string;
+  /** Nearest health center distance category. */
+  healthCenterDistance?: HealthCenterDistance;
+  familySize?: number | null;
+  /** First clinical / program visit date (YYYY-MM-DD). */
+  firstVisitDate?: string;
+  /** EPI / routine immunization schedule complete. */
+  immunizationsComplete?: boolean | null;
   symptoms: string[];
   milk: string;
   dose: string;
   medication: string;
   supplements: string;
-  photoUrl: string;
+  /** User-uploaded face photo (data URL). `null` = built-in default avatar by gender. */
+  profilePhotoDataUrl: string | null;
+  recordAttachments: PatientRecordAttachment[];
   lastVisitDate: string;
   createdAt: string;
-  week1: WeekData;
-  week2: WeekData;
-  week3: WeekData;
-  week4: WeekData;
+  treatmentWeeks: WeekData[];
   isDeceased: boolean;
+  /** Date of death (YYYY-MM-DD). Meaningful when `isDeceased` is true. */
+  dateOfDeath?: string;
+  medicalHistory?: PatientMedicalHistory;
 };
+
+type LegacyPatient = Omit<Patient, "treatmentWeeks" | "profilePhotoDataUrl" | "recordAttachments"> & {
+  treatmentWeeks?: WeekData[];
+  week1?: WeekData;
+  week2?: WeekData;
+  week3?: WeekData;
+  week4?: WeekData;
+  /** Removed: migrated away on load. */
+  photoUrl?: string;
+  profilePhotoDataUrl?: string | null;
+  recordAttachments?: PatientRecordAttachment[];
+};
+
+/** Ensures new profile / medical fields exist (localStorage migration). */
+export function normalizePatientRecord(p: Patient | LegacyPatient): Patient {
+  const legacy = p as LegacyPatient;
+  const { photoUrl: _legacyPhoto, ...rest } = legacy;
+  void _legacyPhoto;
+
+  const baseWeeks = normalizeTreatmentWeeks(legacy);
+  const medicalHistory = mergeMedicalHistory(rest.medicalHistory);
+  const clinicalForBootstrap = medicalHistory.clinicalEdemaGrade ?? "None";
+  const hasAnyWeeklyEdema = baseWeeks.some((w) => w.edemaGrade !== "None");
+  /** Copy clinical grade into every week when the grid had no edema yet (legacy / medical-only records). */
+  const treatmentWeeks =
+    !hasAnyWeeklyEdema && clinicalForBootstrap !== "None"
+      ? baseWeeks.map((w) => ({ ...w, edemaGrade: clinicalForBootstrap }))
+      : baseWeeks.map((w) => ({ ...w }));
+
+  const merged: Patient = {
+    ...(rest as Patient),
+    treatmentWeeks,
+    profilePhotoDataUrl:
+      rest.profilePhotoDataUrl !== undefined && rest.profilePhotoDataUrl !== ""
+        ? rest.profilePhotoDataUrl
+        : null,
+    recordAttachments: Array.isArray(rest.recordAttachments) ? rest.recordAttachments : [],
+    motherName: rest.motherName ?? "",
+    healthCenterDistance: rest.healthCenterDistance ?? "",
+    familySize: rest.familySize ?? null,
+    firstVisitDate: rest.firstVisitDate ?? rest.createdAt ?? "",
+    immunizationsComplete: rest.immunizationsComplete ?? null,
+    dateOfDeath: (rest as Patient).dateOfDeath,
+    medicalHistory,
+  };
+  return syncPatientAnthropometryFromTreatmentWeeks(merged);
+}
+
+export const TREATMENT_WEEKS_COUNT = 12;
 
 export const GOVERNORATES: Record<string, string[]> = {
   "Sana'a": ["Old City", "Shu'ub", "Bani Hashish", "Sanhan", "Hamdan", "Manakhah"],
@@ -90,7 +224,9 @@ function calcZScore(muac: number): number {
 }
 
 function calcRutf(weight: number): number {
-  return parseFloat(((weight * 200) / 500).toFixed(1));
+  const raw = (weight * 200) / 500;
+  const roundedToHalf = Math.round(raw * 2) / 2;
+  return parseFloat(roundedToHalf.toFixed(1));
 }
 
 function calcDiagnosis(muac: number, edema: boolean, isDeceased: boolean): Diagnosis {
@@ -108,10 +244,6 @@ function calcPercentage(muac: number, diagnosis: Diagnosis): number {
   if (diagnosis === "Recovered") return Math.round(80 + Math.random() * 15);
   if (diagnosis === "Deceased") return 0;
   return Math.round(70 + Math.random() * 20);
-}
-
-export function calcPercentageForPatient(patient: Patient): number {
-  return calcPercentage(patient.muac, patient.diagnosis);
 }
 
 const BASE_DATA = [
@@ -157,19 +289,363 @@ const SYMPTOM_SETS = [
   ["Pale face", "Diarrhea", "Vomiting"],
 ];
 
-function makeWeek(weight: number, muac: number, edema: boolean, week: number): WeekData {
-  const wAdj = weight + week * (0.1 + Math.random() * 0.15);
-  const mAdj = muac + week * (0.05 + Math.random() * 0.1);
+function makeWeek(
+  weight: number,
+  lengthHeightCm: number,
+  muac: number,
+  edema: boolean,
+  weekIndex: number,
+): WeekData {
+  const wAdj = weight + weekIndex * (0.1 + Math.random() * 0.15);
+  const mAdj = muac + weekIndex * (0.05 + Math.random() * 0.1);
   const rutf = calcRutf(wAdj);
   return {
     weight: parseFloat(wAdj.toFixed(1)),
     muac: parseFloat(mAdj.toFixed(1)),
-    edema: week <= 1 ? edema : false,
+    edemaGrade: weekIndex <= 1 && edema ? "+" : "None",
     rutf,
-    height: week === 4 ? null : null,
-    zScore: calcZScore(mAdj),
+    height: isHeightCaptureWeekIndex(weekIndex)
+      ? Math.round(lengthHeightCm + weekIndex * 0.2)
+      : null,
+    zScore: null,
     supplements: "Vit A + Zinc",
+    followUpOutcome: weekIndex >= 1 ? "Continuing_treatment" : "",
   };
+}
+
+function sanitizeWeekFromStorage(raw: Partial<WeekData> & { edema?: boolean }): WeekData {
+  const g = raw.edemaGrade;
+  let edemaGrade: ClinicalEdemaGrade = "None";
+  if (g === "+" || g === "++" || g === "+++" || g === "None") edemaGrade = g;
+  else if (raw.edema === true) edemaGrade = "+";
+  return {
+    weight: raw.weight ?? null,
+    muac: raw.muac ?? null,
+    edemaGrade,
+    rutf: raw.rutf ?? null,
+    height: raw.height ?? null,
+    zScore: raw.zScore ?? null,
+    supplements: raw.supplements ?? "",
+    followUpOutcome: (raw.followUpOutcome ?? "") as FollowUpOutcome,
+  };
+}
+
+export function createEmptyWeekData(): WeekData {
+  return {
+    weight: null,
+    muac: null,
+    edemaGrade: "None",
+    rutf: null,
+    height: null,
+    zScore: null,
+    supplements: "",
+    followUpOutcome: "",
+  };
+}
+
+/** True if a treatment week has any entered follow-up or anthropometry data. */
+export function weekHasMeaningfulData(week: WeekData): boolean {
+  return (
+    week.weight !== null ||
+    week.muac !== null ||
+    week.height !== null ||
+    week.supplements.trim().length > 0 ||
+    (week.followUpOutcome ?? "") !== "" ||
+    week.edemaGrade !== "None"
+  );
+}
+
+function latestNumericWeekValue(weeks: WeekData[], pick: (w: WeekData) => number | null): number | null {
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    const v = pick(weeks[i]!);
+    if (v != null && !Number.isNaN(v)) return v;
+  }
+  return null;
+}
+
+const EDEMA_GRADE_RANK: Record<ClinicalEdemaGrade, number> = {
+  None: 0,
+  "+": 1,
+  "++": 2,
+  "+++": 3,
+};
+
+/** Strongest edema grade recorded across the 12-week grid. */
+export function worstWeeklyEdemaGrade(weeks: WeekData[]): ClinicalEdemaGrade {
+  let worst: ClinicalEdemaGrade = "None";
+  for (const w of weeks) {
+    if (EDEMA_GRADE_RANK[w.edemaGrade] > EDEMA_GRADE_RANK[worst]) worst = w.edemaGrade;
+  }
+  return worst;
+}
+
+/** Aligns `medicalHistory.clinicalEdemaGrade` (and legacy `edema`) with the worst grade in treatment weeks. */
+export function applyWeeklyEdemaToMedicalHistory(patient: Patient): Patient {
+  const worstWeekly = worstWeeklyEdemaGrade(patient.treatmentWeeks ?? []);
+  const mh = mergeMedicalHistory(patient.medicalHistory);
+  // One-way sync rule: weekly edema can promote medical edema, but medical edits do not rewrite weekly slots.
+  const resolved: ClinicalEdemaGrade = worstWeekly !== "None" ? worstWeekly : mh.clinicalEdemaGrade;
+  return {
+    ...patient,
+    medicalHistory: { ...mh, clinicalEdemaGrade: resolved },
+    edema: resolved !== "None",
+  };
+}
+
+/** Medical history graded edema or legacy admission `edema` flag (not the 12-week grid). */
+export function patientHasAdmissionEdemaOnly(
+  p: Pick<Patient, "medicalHistory" | "edema">,
+): boolean {
+  const g = p.medicalHistory?.clinicalEdemaGrade ?? "None";
+  if (g !== "None") return true;
+  return p.edema;
+}
+
+/** Any treatment week has clinical edema + / ++ / +++. */
+export function patientHasWeeklyEdemaPlus(p: Pick<Patient, "treatmentWeeks">): boolean {
+  const weeks = p.treatmentWeeks;
+  if (!weeks?.length) return false;
+  return weeks.some((w) => w.edemaGrade === "+" || w.edemaGrade === "++" || w.edemaGrade === "+++");
+}
+
+/** Stable key for syncing modal state when persisted weekly edema grades change. */
+export function weeklyEdemaGradesKey(p: Pick<Patient, "treatmentWeeks">): string {
+  return (p.treatmentWeeks ?? []).map((w) => w.edemaGrade).join("\t");
+}
+
+/** Medical history, weekly grid, or legacy admission flag — any + / ++ / +++ stops outpatient flow. */
+export function patientHasClinicalEdema(
+  p: Pick<Patient, "medicalHistory" | "edema" | "treatmentWeeks">,
+): boolean {
+  return patientHasAdmissionEdemaOnly(p) || patientHasWeeklyEdemaPlus(p);
+}
+
+/** Directory / export: worst weekly grade, else medical history grade, else legacy boolean as "+"/لا. */
+export function formatEdemaForTable(
+  p: Pick<Patient, "medicalHistory" | "edema" | "treatmentWeeks">,
+): string {
+  const ww = p.treatmentWeeks?.length ? worstWeeklyEdemaGrade(p.treatmentWeeks) : ("None" as ClinicalEdemaGrade);
+  if (ww !== "None") return ww;
+  const g = p.medicalHistory?.clinicalEdemaGrade ?? "None";
+  if (g !== "None") return g;
+  return p.edema ? "+" : "لا";
+}
+
+/** Weight / height / MUAC from the latest week that recorded each value; falls back to profile fields. */
+export function getPatientDerivedAnthropometry(patient: Patient): {
+  weight: number;
+  height: number;
+  muac: number;
+  wfh: number;
+  zScore: number;
+  diagnosis: Diagnosis;
+} {
+  if (patient.isDeceased) {
+    return {
+      weight: patient.weight,
+      height: patient.height,
+      muac: patient.muac,
+      wfh: patient.wfh,
+      zScore: patient.zScore,
+      diagnosis: patient.diagnosis,
+    };
+  }
+  const weeks = patient.treatmentWeeks ?? [];
+  const wFrom = latestNumericWeekValue(weeks, (w) => w.weight);
+  const hFrom = latestNumericWeekValue(weeks, (w) => w.height);
+  const mFrom = latestNumericWeekValue(weeks, (w) => w.muac);
+  const weight = wFrom ?? patient.weight;
+  const height = hFrom ?? patient.height;
+  const muac = mFrom ?? patient.muac;
+  const wfh =
+    weight > 0 && height > 0 ? calcWFHValue(weight, height) : patient.wfh;
+  const zScore =
+    patient.ageMonths >= 6 && muac > 0 ? calcZScoreFromMuac(muac) : patient.zScore;
+  const diagnosis = calcDiagnosisFromMuac(muac, patientHasClinicalEdema(patient));
+  return { weight, height, muac, wfh, zScore, diagnosis };
+}
+
+/** Copies latest weekly vitals onto the patient profile so charts, exports, and tabs stay aligned. */
+export function syncPatientAnthropometryFromTreatmentWeeks(patient: Patient): Patient {
+  if (patient.isDeceased) return patient;
+  const withMh = applyWeeklyEdemaToMedicalHistory(patient);
+  const d = getPatientDerivedAnthropometry(withMh);
+  return {
+    ...withMh,
+    weight: d.weight,
+    height: d.height,
+    muac: d.muac,
+    wfh: d.wfh,
+    zScore: d.zScore,
+    diagnosis: d.diagnosis,
+  };
+}
+
+export function calcPercentageForPatient(patient: Patient): number {
+  const d = getPatientDerivedAnthropometry(patient);
+  return calcPercentage(d.muac, d.diagnosis);
+}
+
+/** Last week index (1–12) that already has follow-up data; else week 12 index. */
+export function preferredDeathWeekIndex(patient: Pick<Patient, "treatmentWeeks">): number {
+  const weeks = patient.treatmentWeeks;
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    if (weekHasMeaningfulData(weeks[i]!)) return i;
+  }
+  return Math.max(0, weeks.length - 1);
+}
+
+/** Sets vital death flags and marks the given week’s follow-up outcome as Death. */
+export function withPatientDeathRecorded(
+  patient: Patient,
+  deathDate: string,
+  weekIndex: number,
+): Patient {
+  const idx = Math.max(0, Math.min(patient.treatmentWeeks.length - 1, weekIndex));
+  const treatmentWeeks = patient.treatmentWeeks.map((w, i) =>
+    i === idx ? { ...w, followUpOutcome: FOLLOW_UP_OUTCOME_DEATH } : w,
+  );
+  return {
+    ...patient,
+    isDeceased: true,
+    diagnosis: "Deceased",
+    dateOfDeath: deathDate,
+    lastVisitDate: deathDate,
+    treatmentWeeks,
+  };
+}
+
+/**
+ * Sum of weekly RUTF (sachets/day) across the 12-week grid — only weeks where `rutf` is recorded count;
+ * empty weeks are skipped. Used for table totals / export / statistics.
+ * Returns 0 when clinical edema is present or age is under 6 months (outpatient RUTF not used).
+ */
+export function totalProgramRutfSachets(
+  patient: Pick<Patient, "edema" | "ageMonths" | "treatmentWeeks" | "medicalHistory">,
+): number {
+  if (patientHasClinicalEdema(patient) || patient.ageMonths < 6) return 0;
+  let lastUsedWeekIdx = -1;
+  for (let i = patient.treatmentWeeks.length - 1; i >= 0; i--) {
+    const w = patient.treatmentWeeks[i]!;
+    if ((w.weight ?? 0) > 0) {
+      lastUsedWeekIdx = i;
+      break;
+    }
+  }
+  if (lastUsedWeekIdx < 0) return 0;
+  let sum = 0;
+  for (let i = 0; i <= lastUsedWeekIdx; i++) {
+    const week = patient.treatmentWeeks[i]!;
+    const wkWeight = week.weight ?? 0;
+    if (wkWeight <= 0) continue;
+    // Keep table total consistent with weekly card formula/rounding.
+    sum += calcRutfAmount(wkWeight);
+  }
+  return parseFloat(sum.toFixed(1));
+}
+
+function normalizeTreatmentWeeks(patient: LegacyPatient): WeekData[] {
+  if (Array.isArray(patient.treatmentWeeks)) {
+    const normalized = patient.treatmentWeeks
+      .slice(0, TREATMENT_WEEKS_COUNT)
+      .map((week) =>
+        sanitizeWeekFromStorage({ ...createEmptyWeekData(), ...(week as Partial<WeekData> & { edema?: boolean }) }),
+      );
+
+    while (normalized.length < TREATMENT_WEEKS_COUNT) {
+      normalized.push(createEmptyWeekData());
+    }
+    return normalized;
+  }
+
+  const legacyWeeks = [patient.week1, patient.week2, patient.week3, patient.week4]
+    .filter(Boolean)
+    .map((week) =>
+      sanitizeWeekFromStorage({ ...createEmptyWeekData(), ...(week as Partial<WeekData> & { edema?: boolean }) }),
+    );
+
+  while (legacyWeeks.length < TREATMENT_WEEKS_COUNT) {
+    legacyWeeks.push(createEmptyWeekData());
+  }
+
+  return legacyWeeks;
+}
+
+/** Short numeric id for tables (1 … 99999). */
+function isSequentialNumericPatientId(id: string): boolean {
+  return /^\d{1,5}$/.test(id);
+}
+
+function patientIdsNeedRenumber(patients: Patient[]): boolean {
+  const seen = new Set<string>();
+  for (const p of patients) {
+    if (!isSequentialNumericPatientId(p.id)) return true;
+    if (seen.has(p.id)) return true;
+    seen.add(p.id);
+  }
+  return false;
+}
+
+function assignSequentialPatientIds(patients: Patient[]): Patient[] {
+  return patients.map((p, i) => ({ ...p, id: String(i + 1) }));
+}
+
+/** Next free id = max(existing numeric id) + 1 (supports up to 99 999). */
+export function nextSequentialPatientId(patients: Patient[]): string {
+  let max = 0;
+  for (const p of patients) {
+    if (/^\d+$/.test(p.id)) {
+      const n = parseInt(p.id, 10);
+      if (!Number.isNaN(n)) max = Math.max(max, n);
+    }
+  }
+  return String(max + 1);
+}
+
+/** Blank patient row for the 4-tab chart (add flow). Caller supplies `id` from `nextSequentialPatientId`. */
+export function createDraftPatient(id: string): Patient {
+  const today = new Date().toISOString().split("T")[0];
+  const defaultGov = "Sana'a";
+  const defaultDist = GOVERNORATES[defaultGov][0];
+  const weight = 7;
+  const height = 72;
+  const muac = 12.8;
+  const dob = "2023-01-01";
+  const wfh = calcWFHValue(weight, height);
+  const zScore = calcZScoreFromMuac(muac);
+  const diagnosis = calcDiagnosisFromMuac(muac, false);
+  const doseVal = calcRutfAmount(weight);
+
+  return normalizePatientRecord({
+    id,
+    name: "",
+    fatherName: "",
+    fatherPhone: "",
+    motherName: "",
+    gender: "M",
+    dateOfBirth: dob,
+    ageMonths: calcAgeMonthsFromDob(dob),
+    weight,
+    height,
+    wfh,
+    edema: false,
+    zScore,
+    muac,
+    diagnosis,
+    governorate: defaultGov,
+    district: defaultDist,
+    symptoms: [],
+    milk: "F75",
+    dose: `${doseVal} sachets/day`,
+    medication: "Amoxicillin + Vit A",
+    supplements: "Vit A + Zinc + Iron",
+    profilePhotoDataUrl: null,
+    recordAttachments: [],
+    lastVisitDate: today,
+    createdAt: today,
+    treatmentWeeks: Array.from({ length: TREATMENT_WEEKS_COUNT }, () => createEmptyWeekData()),
+    isDeceased: false,
+  });
 }
 
 function generatePatients(): Patient[] {
@@ -183,11 +659,12 @@ function generatePatients(): Patient[] {
     const lastVisit = new Date(created.getTime() + Math.random() * 14 * 24 * 60 * 60 * 1000);
     const rutf = calcRutf(d.weight);
 
-    return {
-      id: `YNS-${2024100 + i}`,
+    return normalizePatientRecord({
+      id: String(i + 1),
       name: d.name,
       fatherName: d.father,
       fatherPhone: d.phone,
+      motherName: "",
       gender: d.gender,
       dateOfBirth: d.dob,
       ageMonths: age,
@@ -205,15 +682,22 @@ function generatePatients(): Patient[] {
       dose: `${rutf} sachets/day`,
       medication: MEDICATIONS[i % MEDICATIONS.length],
       supplements: "Vit A + Zinc + Iron",
-      photoUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(d.name)}&backgroundColor=b6e3f4,c0aede,d1d4f9`,
+      profilePhotoDataUrl: null,
+      recordAttachments: [],
       lastVisitDate: lastVisit.toISOString().split("T")[0],
       createdAt: created.toISOString().split("T")[0],
-      week1: makeWeek(d.weight, d.muac, d.edema, 0),
-      week2: makeWeek(d.weight, d.muac, d.edema, 1),
-      week3: makeWeek(d.weight, d.muac, d.edema, 2),
-      week4: makeWeek(d.weight, d.muac, d.edema, 3),
+      treatmentWeeks: [
+        makeWeek(d.weight, d.height, d.muac, d.edema, 0),
+        makeWeek(d.weight, d.height, d.muac, d.edema, 1),
+        makeWeek(d.weight, d.height, d.muac, d.edema, 2),
+        makeWeek(d.weight, d.height, d.muac, d.edema, 3),
+        ...Array.from({ length: TREATMENT_WEEKS_COUNT - 4 }, () =>
+          createEmptyWeekData(),
+        ),
+      ],
       isDeceased: d.deceased,
-    };
+      dateOfDeath: d.deceased ? lastVisit.toISOString().split("T")[0] : undefined,
+    });
   });
 }
 
@@ -222,15 +706,39 @@ const STORAGE_KEY = "yns_patients_v3";
 export function loadPatients(): Patient[] {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return JSON.parse(stored);
+    if (stored) {
+      const parsed = JSON.parse(stored) as LegacyPatient[];
+      let migrated = parsed.map((patient) => {
+        const normalizedWeeks = normalizeTreatmentWeeks(patient);
+        const { week1, week2, week3, week4, ...rest } = patient;
+        return normalizePatientRecord({
+          ...rest,
+          treatmentWeeks: normalizedWeeks,
+        } as Patient);
+      });
+
+      if (patientIdsNeedRenumber(migrated)) {
+        migrated = assignSequentialPatientIds(migrated);
+      }
+
+      savePatients(migrated);
+      return migrated;
+    }
   } catch {}
   const initial = generatePatients();
-  savePatients(initial);
+  void savePatients(initial);
   return initial;
 }
 
-export function savePatients(patients: Patient[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(patients));
+/** Persists to localStorage. Returns false if quota exceeded or another write error. */
+export function savePatients(patients: Patient[]): boolean {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(patients));
+    return true;
+  } catch (e) {
+    console.error("savePatients failed", e);
+    return false;
+  }
 }
 
 export function calcDiagnosisFromMuac(muac: number, edema: boolean): Diagnosis {
@@ -238,6 +746,20 @@ export function calcDiagnosisFromMuac(muac: number, edema: boolean): Diagnosis {
   if (muac < 11.5) return "SAM";
   if (muac < 12.5) return "MAM";
   return "Normal";
+}
+
+/** Clears death vital flags and removes Death from all weekly outcome fields. */
+export function withPatientDeathCleared(patient: Patient): Patient {
+  const treatmentWeeks = patient.treatmentWeeks.map((w) =>
+    w.followUpOutcome === FOLLOW_UP_OUTCOME_DEATH ? { ...w, followUpOutcome: "" as FollowUpOutcome } : w,
+  );
+  return {
+    ...patient,
+    isDeceased: false,
+    dateOfDeath: undefined,
+    diagnosis: calcDiagnosisFromMuac(patient.muac, patientHasClinicalEdema(patient)),
+    treatmentWeeks,
+  };
 }
 
 export function calcAgeMonthsFromDob(dob: string): number {

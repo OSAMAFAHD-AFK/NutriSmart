@@ -5,20 +5,30 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
-import Patients from "@/pages/Patients";
 import Analytics from "@/pages/Analytics";
 import AgeGroupPage from "@/pages/AgeGroupPage";
 import NotFound from "@/pages/not-found";
+import PublicHomePage from "@/pages/PublicHomePage";
+import SystemEntryPage from "@/pages/SystemEntryPage";
+import SystemLoginPage from "@/pages/SystemLoginPage";
+import OrganizationManagementPage from "@/pages/OrganizationManagementPage";
+import HealthcareComingSoonPage from "@/pages/HealthcareComingSoonPage";
+import { isSystemType } from "@/lib/systemTypes";
 
 const queryClient = new QueryClient();
 
-function Router({ darkMode, onToggleDark }: { darkMode: boolean; onToggleDark: () => void }) {
+function OtcSystemRoutes({
+  darkMode,
+  onToggleDark,
+}: {
+  darkMode: boolean;
+  onToggleDark: () => void;
+}) {
   return (
     <Layout darkMode={darkMode} onToggleDark={onToggleDark}>
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/group/:groupId" component={AgeGroupPage} />
-        <Route path="/patients" component={Patients} />
         <Route path="/analytics" component={Analytics} />
         <Route component={NotFound} />
       </Switch>
@@ -47,7 +57,25 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router darkMode={darkMode} onToggleDark={toggleDark} />
+          <Switch>
+            <Route path="/" component={PublicHomePage} />
+            <Route path="/systems" component={SystemEntryPage} />
+            <Route path="/login/:systemId">
+              {(params) =>
+                isSystemType(params.systemId) ? (
+                  <SystemLoginPage systemId={params.systemId} />
+                ) : (
+                  <NotFound />
+                )
+              }
+            </Route>
+            <Route path="/organization" component={OrganizationManagementPage} />
+            <Route path="/healthcare" component={HealthcareComingSoonPage} />
+            <Route path="/otc" nest>
+              <OtcSystemRoutes darkMode={darkMode} onToggleDark={toggleDark} />
+            </Route>
+            <Route component={NotFound} />
+          </Switch>
         </WouterRouter>
         <Toaster />
       </TooltipProvider>

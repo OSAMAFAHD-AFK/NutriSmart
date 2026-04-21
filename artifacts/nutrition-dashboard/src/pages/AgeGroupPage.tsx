@@ -1,9 +1,27 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
 import {
-  loadPatients, savePatients, type Patient,
-  getDiagnosisColor, getPercentageColor, calcPercentageForPatient,
+  loadPatients,
+  savePatients,
+  type Patient,
+  getDiagnosisColor,
+  getPercentageColor,
+  calcPercentageForPatient,
+  nextSequentialPatientId,
+  createDraftPatient,
+  totalProgramRutfSachets,
+  patientHasClinicalEdema,
+  formatEdemaForTable,
+  getPatientDerivedAnthropometry,
 } from "@/lib/data";
+import {
+  heightMeasureShortLabel,
+  isInfantUnder6Months,
+  stubWeightForHeightZ,
+  stubWeightForAgeZ,
+  classifyWazAsStuntingBand,
+  classifyNutritionTypeBand,
+} from "@/lib/patientTableAnthro";
 import { AGE_GROUPS, type AgeGroupId, formatAge, loadSponsors, saveSponsor, getDefaultSponsorName } from "@/lib/ageGroups";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -12,12 +30,12 @@ import {
 import {
   Plus, Search, AlertCircle, Users,
   BarChart3, TableIcon, Building2, TrendingUp, Skull, Heart, ArrowLeft,
-  Pencil, Check, X as XIcon,
+  Pencil, Check, X as XIcon, FileSpreadsheet, FileText,
 } from "lucide-react";
-import PatientModal from "@/components/PatientModal";
 import PatientDetailModal from "@/components/PatientDetailModal";
-import WeeklyUpdateModal from "@/components/WeeklyUpdateModal";
+import { patientTableClass, patientTableScrollClass } from "@/lib/patientDirectoryTableClasses";
 import SymptomsModal from "@/components/SymptomsModal";
+import { exportRowsToExcel, exportRowsToPdf } from "@/lib/tableExport";
 
 const DIAG_COLORS: Record<string, string> = {
   SAM: "#ef4444", MAM: "#f59e0b", Normal: "#3b82f6", Recovered: "#10b981", Deceased: "#6b7280",
@@ -47,12 +65,9 @@ export default function AgeGroupPage() {
   const [activeTab, setActiveTab] = useState<"patients" | "analytics">("patients");
   const [search, setSearch] = useState("");
   const [diagnosisFilter, setDiagnosisFilter] = useState("All");
-  const [govFilter, setGovFilter] = useState("All");
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [detailPatient, setDetailPatient] = useState<Patient | null>(null);
-  const [weeklyPatient, setWeeklyPatient] = useState<Patient | null>(null);
+  const [detailIsNew, setDetailIsNew] = useState(false);
   const [symptomsPatient, setSymptomsPatient] = useState<Patient | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
   const [sponsorName, setSponsorName] = useState("");
   const [isEditingSponsor, setIsEditingSponsor] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -101,28 +116,25 @@ export default function AgeGroupPage() {
     [patients, group]
   );
 
-  const governorates = useMemo(() => ["All", ...Array.from(new Set(groupPatients.map((p) => p.governorate)))], [groupPatients]);
-
   const filtered = useMemo(() => {
     return groupPatients.filter((p) => {
       const matchSearch = !search ||
         p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.id.toLowerCase().includes(search.toLowerCase()) ||
-        p.governorate.toLowerCase().includes(search.toLowerCase());
-      const matchDiag = diagnosisFilter === "All" || p.diagnosis === diagnosisFilter;
-      const matchGov = govFilter === "All" || p.governorate === govFilter;
-      return matchSearch && matchDiag && matchGov;
+        p.id.toLowerCase().includes(search.toLowerCase());
+      const matchDiag =
+        diagnosisFilter === "All" || getPatientDerivedAnthropometry(p).diagnosis === diagnosisFilter;
+      return matchSearch && matchDiag;
     });
-  }, [groupPatients, search, diagnosisFilter, govFilter]);
+  }, [groupPatients, search, diagnosisFilter]);
 
   const stats = useMemo(() => ({
     total: groupPatients.length,
-    sam: groupPatients.filter((p) => p.diagnosis === "SAM").length,
-    mam: groupPatients.filter((p) => p.diagnosis === "MAM").length,
-    recovered: groupPatients.filter((p) => p.diagnosis === "Recovered").length,
-    normal: groupPatients.filter((p) => p.diagnosis === "Normal").length,
+    sam: groupPatients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "SAM").length,
+    mam: groupPatients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "MAM").length,
+    recovered: groupPatients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "Recovered").length,
+    normal: groupPatients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "Normal").length,
     deaths: groupPatients.filter((p) => p.isDeceased).length,
-    edema: groupPatients.filter((p) => p.edema && !p.isDeceased).length,
+    edema: groupPatients.filter((p) => patientHasClinicalEdema(p) && !p.isDeceased).length,
     male: groupPatients.filter((p) => p.gender === "M").length,
     female: groupPatients.filter((p) => p.gender === "F").length,
   }), [groupPatients]);
@@ -131,10 +143,11 @@ export default function AgeGroupPage() {
     const map: Record<string, { name: string; SAM: number; MAM: number; Normal: number; Recovered: number }> = {};
     groupPatients.forEach((p) => {
       if (!map[p.governorate]) map[p.governorate] = { name: p.governorate, SAM: 0, MAM: 0, Normal: 0, Recovered: 0 };
-      if (p.diagnosis === "SAM") map[p.governorate].SAM++;
-      else if (p.diagnosis === "MAM") map[p.governorate].MAM++;
-      else if (p.diagnosis === "Normal") map[p.governorate].Normal++;
-      else if (p.diagnosis === "Recovered") map[p.governorate].Recovered++;
+      const d = getPatientDerivedAnthropometry(p).diagnosis;
+      if (d === "SAM") map[p.governorate].SAM++;
+      else if (d === "MAM") map[p.governorate].MAM++;
+      else if (d === "Normal") map[p.governorate].Normal++;
+      else if (d === "Recovered") map[p.governorate].Recovered++;
     });
     return Object.values(map).sort((a, b) => (b.SAM + b.MAM) - (a.SAM + a.MAM));
   }, [groupPatients]);
@@ -151,40 +164,87 @@ export default function AgeGroupPage() {
     { name: "Female", value: stats.female },
   ], [stats]);
 
-  function handleSave(patient: Patient) {
-    const exists = patients.find((p) => p.id === patient.id);
-    const updated = exists
-      ? patients.map((p) => (p.id === patient.id ? patient : p))
-      : [...patients, patient];
-    savePatients(updated);
-    setPatients(updated);
-    setShowAddModal(false);
-    setSelectedPatient(null);
-  }
-
-  function handleWeeklyUpdate(updated: Patient) {
-    const list = patients.map((p) => (p.id === updated.id ? updated : p));
-    savePatients(list);
-    setPatients(list);
-    setWeeklyPatient(null);
-  }
+  const STORAGE_SAVE_FAILED =
+    "Could not save data (browser storage may be full). Try removing some document photos from patients, then save again.";
 
   function handleSymptomsUpdate(updated: Patient) {
     const list = patients.map((p) => (p.id === updated.id ? updated : p));
-    savePatients(list);
+    if (!savePatients(list)) {
+      window.alert(STORAGE_SAVE_FAILED);
+      return;
+    }
     setPatients(list);
     setSymptomsPatient(null);
+    setDetailPatient((cur) => (cur && cur.id === updated.id ? updated : cur));
   }
 
-  const totalRutf = (p: Patient) => {
-    if (p.edema) return 0;
-    return parseFloat(((p.week1.rutf ?? 0) + (p.week2.rutf ?? 0) + (p.week3.rutf ?? 0) + (p.week4.rutf ?? 0)).toFixed(1));
-  };
+  function handlePatientChartSave(updated: Patient) {
+    if (detailIsNew) {
+      const next = [...patients, updated];
+      if (!savePatients(next)) {
+        window.alert(STORAGE_SAVE_FAILED);
+        return;
+      }
+      setPatients(next);
+      setDetailPatient(null);
+      setDetailIsNew(false);
+    } else {
+      const list = patients.map((p) => (p.id === updated.id ? updated : p));
+      if (!savePatients(list)) {
+        window.alert(STORAGE_SAVE_FAILED);
+        return;
+      }
+      setPatients(list);
+      setDetailPatient(updated);
+    }
+  }
+
+  function displayTotalRutf(p: Patient): string {
+    if (patientHasClinicalEdema(p) || isInfantUnder6Months(p)) return "—";
+    const n = totalProgramRutfSachets(p);
+    return n > 0 ? String(n) : "0";
+  }
+
+  const heightColShort = group.id === "0-2" ? "L" : "H";
 
   const malnutritionRate = stats.total > 0 ? Math.round(((stats.sam + stats.mam) / stats.total) * 100) : 0;
+  const exportRows = useMemo(
+    () =>
+      filtered.map((p) => {
+        const d = getPatientDerivedAnthropometry(p);
+        const whz = stubWeightForHeightZ({ ...p, weight: d.weight, height: d.height });
+        const hasEdema = patientHasClinicalEdema(p);
+        const nutritionType = classifyNutritionTypeBand({
+          edema: hasEdema,
+          whz,
+          muac: isInfantUnder6Months(p) ? null : d.muac,
+        });
+        return {
+        ID: p.id,
+        Name: p.name,
+        Gender: p.gender,
+        Age: formatAge(p.ageMonths, group.ageFormat),
+        FirstVisit: p.firstVisitDate ?? "",
+        WeightKg: d.weight,
+        HeightCm: d.height,
+        WHZ: whz,
+        HAZ: stubWeightForAgeZ({ ...p, weight: d.weight }),
+        HAZ_result: classifyWazAsStuntingBand(stubWeightForAgeZ({ ...p, weight: d.weight })),
+        MUAC: isInfantUnder6Months(p) ? "" : d.muac,
+        Edema: formatEdemaForTable(p),
+        Diagnosis: d.diagnosis,
+        Type: nutritionType,
+        SymptomsCount: p.symptoms.length,
+        TotalRUTF_weeklySum: displayTotalRutf(p),
+        ScorePercent: `${calcPercentageForPatient(p)}%`,
+        LastVisit: p.lastVisitDate,
+      };
+      }),
+    [filtered, group.ageFormat],
+  );
 
   return (
-    <div className="flex flex-col gap-4 h-full">
+    <div className="flex h-full min-h-0 flex-col gap-4">
 
       {/* ── Page Header ── */}
       <div className="shrink-0">
@@ -285,7 +345,7 @@ export default function AgeGroupPage() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name, ID, or location..."
+                placeholder="Search by name or ID..."
                 className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-input bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
@@ -301,178 +361,212 @@ export default function AgeGroupPage() {
               <option value="Recovered">Recovered</option>
               <option value="Deceased">Deceased</option>
             </select>
-            <select
-              value={govFilter}
-              onChange={(e) => setGovFilter(e.target.value)}
-              className="text-sm rounded-lg border border-input bg-card text-foreground px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              {governorates.map((g) => <option key={g} value={g}>{g}</option>)}
-            </select>
             <button
-              onClick={() => setShowAddModal(true)}
+              onClick={() => {
+                setDetailPatient(createDraftPatient(nextSequentialPatientId(patients)));
+                setDetailIsNew(true);
+              }}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity shadow-sm shrink-0"
             >
               <Plus size={14} /> Add Patient
             </button>
           </div>
 
-          <p className="text-xs text-muted-foreground shrink-0">
-            {filtered.length} of {groupPatients.length} patients shown — click any row to view details
-          </p>
-
-          {/* Edema Alert */}
-          {stats.edema > 0 && (
-            <div className="flex items-start gap-3 p-3 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900 shrink-0">
-              <AlertCircle size={14} className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-              <div className="text-xs font-medium text-red-700 dark:text-red-400">
-                <span className="font-bold">{stats.edema} patient(s) with Edema</span> — refer to hospital immediately.
-              </div>
-            </div>
-          )}
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground shrink-0">
+            <span>
+              {filtered.length} of {groupPatients.length} patients shown — click any row to view details
+            </span>
+            {stats.edema > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-red-700 dark:text-red-400">
+                <AlertCircle size={12} className="shrink-0" />
+                <span>
+                  <span className="font-semibold">{stats.edema} patient(s) with Edema</span> — refer to hospital immediately.
+                </span>
+              </span>
+            )}
+          </div>
 
           {/* Table */}
-          <div className="flex-1 min-h-0 bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-            <div className="overflow-auto h-full">
-              <table className="w-full text-sm" style={{ minWidth: 1400 }}>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+          <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2 shrink-0 bg-card">
+            <button
+              type="button"
+              onClick={() => exportRowsToExcel(`${group.id}-patients-export`, exportRows)}
+              disabled={exportRows.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <FileSpreadsheet size={13} />
+              Export Excel
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                exportRowsToPdf(
+                  `${group.id}-patients-export`,
+                  `${group.label} Patients Export`,
+                  exportRows,
+                )
+              }
+              disabled={exportRows.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <FileText size={13} />
+              Export PDF
+            </button>
+          </div>
+            <div className={patientTableScrollClass}>
+              <table className={patientTableClass}>
                 <thead className="sticky top-0 z-10">
-                  <tr className="border-b border-border bg-muted/60">
-                    <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide" colSpan={6}>Basic Info</th>
-                    <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-l border-border" colSpan={6}>Measurements</th>
-                    <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-l border-border" colSpan={1}>Diagnosis</th>
-                    <th className="text-center px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-l-2 border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20" colSpan={5}>Week 1</th>
-                    <th className="text-center px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-l-2 border-purple-300 dark:border-purple-800 bg-purple-50/60 dark:bg-purple-950/20" colSpan={5}>Week 2</th>
-                    <th className="text-center px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-l-2 border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20" colSpan={5}>Week 3</th>
-                    <th className="text-center px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-l-2 border-green-300 dark:border-green-800 bg-green-50/60 dark:bg-green-950/20" colSpan={5}>Week 4</th>
-                    <th className="text-center px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-l-2 border-border" colSpan={2}>Summary</th>
-                  </tr>
                   <tr className="border-b border-border bg-card text-xs text-muted-foreground">
-                    <th className="px-3 py-2 text-left font-medium">ID</th>
-                    <th className="px-3 py-2 text-left font-medium">Name</th>
-                    <th className="px-3 py-2 text-center font-medium">Gender</th>
-                    <th className="px-3 py-2 text-center font-medium">Age</th>
-                    <th className="px-3 py-2 text-left font-medium">Governorate</th>
-                    <th className="px-3 py-2 text-left font-medium">District</th>
-                    <th className="px-3 py-2 text-center font-medium border-l border-border">W (kg)</th>
-                    <th className="px-3 py-2 text-center font-medium">H (cm)</th>
-                    <th className="px-3 py-2 text-center font-medium">WFH</th>
-                    <th className="px-3 py-2 text-center font-medium">MUAC</th>
-                    <th className="px-3 py-2 text-center font-medium">Edema</th>
-                    <th className="px-3 py-2 text-center font-medium">Symptoms</th>
-                    <th className="px-3 py-2 text-left font-medium border-l border-border">Diagnosis</th>
-                    <th className="px-2 py-2 text-center font-medium border-l-2 border-blue-300 dark:border-blue-800">W</th>
-                    <th className="px-2 py-2 text-center font-medium">MUAC</th>
-                    <th className="px-2 py-2 text-center font-medium">Edema</th>
-                    <th className="px-2 py-2 text-center font-medium">RUTF</th>
-                    <th className="px-2 py-2 text-center font-medium">Supp</th>
-                    <th className="px-2 py-2 text-center font-medium border-l-2 border-purple-300 dark:border-purple-800">W</th>
-                    <th className="px-2 py-2 text-center font-medium">MUAC</th>
-                    <th className="px-2 py-2 text-center font-medium">Edema</th>
-                    <th className="px-2 py-2 text-center font-medium">RUTF</th>
-                    <th className="px-2 py-2 text-center font-medium">Supp</th>
-                    <th className="px-2 py-2 text-center font-medium border-l-2 border-orange-300 dark:border-orange-800">W</th>
-                    <th className="px-2 py-2 text-center font-medium">MUAC</th>
-                    <th className="px-2 py-2 text-center font-medium">Edema</th>
-                    <th className="px-2 py-2 text-center font-medium">RUTF</th>
-                    <th className="px-2 py-2 text-center font-medium">Supp</th>
-                    <th className="px-2 py-2 text-center font-medium border-l-2 border-green-300 dark:border-green-800">W</th>
-                    <th className="px-2 py-2 text-center font-medium">MUAC</th>
-                    <th className="px-2 py-2 text-center font-medium">Edema</th>
-                    <th className="px-2 py-2 text-center font-medium">RUTF</th>
-                    <th className="px-2 py-2 text-center font-medium">Supp</th>
-                    <th className="px-2 py-2 text-center font-medium border-l-2 border-border">Total RUTF</th>
-                    <th className="px-2 py-2 text-center font-medium">%</th>
+                    <th className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium" title="Patient ID">ID</th>
+                    <th className="min-w-[10rem] max-w-[16rem] px-2 py-2.5 text-left font-medium" title="Full name">Name</th>
+                    <th className="min-w-[4.5rem] px-2 py-2.5 text-center font-medium" title="Male / Female (M or F in cell)">
+                      Gender
+                    </th>
+                    <th className="min-w-[3.25rem] px-2 py-2.5 text-center font-medium" title="Age in group format">Age</th>
+                    <th className="min-w-[6.5rem] px-2 py-2.5 text-left font-medium" title="First program visit">1st visit</th>
+                    <th className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium" title="Weight (kg)">W</th>
+                    <th
+                      className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium"
+                      title={group.id === "0-2" ? "Length (cm)" : "Height (cm)"}
+                    >
+                      {heightColShort}
+                    </th>
+                    <th className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium">WHZ</th>
+                    <th className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium" title="Display stub">
+                      HAZ
+                    </th>
+                    <th className="min-w-[7.75rem] px-2 py-2.5 text-left font-medium">HAZ result</th>
+                    <th className="min-w-[3rem] px-2 py-2.5 text-center font-medium">MUAC</th>
+                    <th className="min-w-[3.25rem] px-2 py-2.5 text-center font-medium">Edema</th>
+                    <th className="min-w-[5.5rem] px-2 py-2.5 text-left font-medium" title="Nutrition diagnosis">Diagnosis</th>
+                    <th className="min-w-[8.5rem] px-2 py-2.5 text-left font-medium">Type</th>
+                    <th className="min-w-[5.5rem] px-2 py-2.5 text-center font-medium" title="Count of selected program symptoms — click cell to edit">
+                      Symptoms
+                    </th>
+                    <th
+                      className="min-w-[4rem] px-2 py-2.5 text-center font-medium"
+                      title="Sum of RUTF (sachets/day) for each week that has a value — empty weeks are not counted"
+                    >
+                      RUTF
+                    </th>
+                    <th className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium" title="Score %">%</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((p) => {
-                    const isEdema = p.edema;
+                    const derived = getPatientDerivedAnthropometry(p);
+                    const isEdema = patientHasClinicalEdema(p);
+                    const edemaLabel = formatEdemaForTable(p);
                     const perc = calcPercentageForPatient(p);
+                    const whzStub = stubWeightForHeightZ({ ...p, weight: derived.weight, height: derived.height });
+                    const wazStub = stubWeightForAgeZ({ ...p, weight: derived.weight });
+                    const wazBand = classifyWazAsStuntingBand(wazStub);
+                    const typeBand = classifyNutritionTypeBand({
+                      edema: isEdema,
+                      whz: whzStub,
+                      muac: isInfantUnder6Months(p) ? null : derived.muac,
+                    });
                     return (
                       <tr
                         key={p.id}
-                        onClick={() => setDetailPatient(p)}
+                        onClick={() => {
+                          setDetailPatient(p);
+                          setDetailIsNew(false);
+                        }}
                         className={`border-b border-border/60 hover:bg-muted/40 transition-colors cursor-pointer ${isEdema ? "bg-red-100/80 dark:bg-red-950/30" : ""} ${p.isDeceased ? "opacity-60" : ""}`}
                       >
-                        <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground whitespace-nowrap">{p.id}</td>
-                        <td className="px-3 py-2.5 font-medium text-foreground whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            {isEdema && !p.isDeceased && <AlertCircle size={12} className="text-red-500 shrink-0" />}
-                            {p.name}
+                        <td className="min-w-[2.75rem] px-2 py-2.5 text-center tabular-nums font-mono text-muted-foreground whitespace-nowrap">{p.id}</td>
+                        <td className="min-w-[10rem] max-w-[16rem] px-2 py-2.5 align-top font-medium text-foreground">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            {isEdema && !p.isDeceased && <AlertCircle size={14} className="shrink-0 text-red-500" />}
+                            <span className="min-w-0 truncate" title={p.name}>{p.name}</span>
                           </div>
                         </td>
-                        <td className="px-3 py-2.5 text-center">
+                        <td className="min-w-[2.5rem] px-2 py-2.5 text-center whitespace-nowrap">
                           <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-semibold ${p.gender === "M" ? "bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400" : "bg-pink-100 text-pink-700 dark:bg-pink-950/30 dark:text-pink-400"}`}>
                             {p.gender}
                           </span>
                         </td>
-                        <td className="px-3 py-2.5 text-center text-xs font-medium">{formatAge(p.ageMonths, group.ageFormat)}</td>
-                        <td className="px-3 py-2.5 text-xs text-foreground whitespace-nowrap">{p.governorate}</td>
-                        <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{p.district}</td>
-                        <td className="px-3 py-2.5 text-center text-xs border-l border-border">{p.weight}</td>
-                        <td className="px-3 py-2.5 text-center text-xs">{p.height}</td>
-                        <td className="px-3 py-2.5 text-center text-xs">{p.wfh}</td>
-                        <td className="px-3 py-2.5 text-center text-xs font-semibold">{p.muac}</td>
-                        <td className="px-3 py-2.5 text-center">
-                          <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${p.edema ? "text-red-700 bg-red-200 dark:text-red-400 dark:bg-red-950/60 font-bold" : "text-muted-foreground"}`}>
-                            {p.edema ? "YES" : "No"}
+                        <td className="min-w-[3.25rem] px-2 py-2.5 text-center text-xs font-medium tabular-nums whitespace-nowrap">{formatAge(p.ageMonths, group.ageFormat)}</td>
+                        <td className="min-w-[6.5rem] max-w-[7rem] px-2 py-2.5 whitespace-nowrap text-xs text-muted-foreground" title={p.firstVisitDate ?? ""}>
+                          {p.firstVisitDate || "—"}
+                        </td>
+                        <td className="min-w-[2.75rem] px-2 py-2.5 text-center tabular-nums whitespace-nowrap">{derived.weight}</td>
+                        <td className="min-w-[2.75rem] px-2 py-2.5 text-center tabular-nums whitespace-nowrap" title={heightMeasureShortLabel(p.ageMonths) === "L" ? "Length (cm)" : "Height (cm)"}>
+                          {derived.height}
+                        </td>
+                        <td className="min-w-[2.75rem] px-2 py-2.5 text-center tabular-nums whitespace-nowrap">
+                          {whzStub == null ? "—" : whzStub}
+                        </td>
+                        <td className="min-w-[2.75rem] px-2 py-2.5 text-center tabular-nums text-muted-foreground whitespace-nowrap">
+                          {wazStub == null ? "—" : wazStub}
+                        </td>
+                        <td className="min-w-[7.75rem] px-2 py-2.5 text-left whitespace-nowrap">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                              wazBand.startsWith("🔴")
+                                ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                                : wazBand.startsWith("🟠")
+                                  ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                                  : "bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300"
+                            }`}
+                          >
+                            {wazBand}
                           </span>
                         </td>
-                        <td className="px-3 py-2.5 text-center text-xs text-muted-foreground">
-                          {p.symptoms.length > 0 ? (
-                            <button onClick={(e) => { e.stopPropagation(); setSymptomsPatient(p); }} className="text-primary underline text-xs hover:opacity-70">{p.symptoms.length}</button>
-                          ) : "—"}
+                        <td
+                          className="min-w-[3rem] px-2 py-2.5 text-center tabular-nums font-semibold whitespace-nowrap"
+                          title={isInfantUnder6Months(p) ? "Under 6 months — refer to hospital." : ""}
+                        >
+                          {isInfantUnder6Months(p) ? "—" : derived.muac}
                         </td>
-                        <td className="px-3 py-2.5 border-l border-border">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${getDiagnosisColor(p.diagnosis)}`}>{p.diagnosis}</span>
+                        <td className="min-w-[3.25rem] px-2 py-2.5 text-center whitespace-nowrap">
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${isEdema ? "text-red-700 bg-red-200 dark:text-red-400 dark:bg-red-950/60 font-bold" : "text-muted-foreground"}`}>
+                            {edemaLabel}
+                          </span>
                         </td>
-                        {isEdema ? (
-                          <td className="px-2 py-2.5 text-center text-xs text-red-500 font-medium border-l-2 border-blue-300 dark:border-blue-800 bg-blue-50/20" colSpan={5}>Refer to hospital</td>
-                        ) : (
-                          <>
-                            <td className="px-2 py-2.5 text-center text-xs border-l-2 border-blue-300 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/5">{p.week1.weight ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-blue-50/30 dark:bg-blue-950/5">{p.week1.muac ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-blue-50/30 dark:bg-blue-950/5">{p.week1.edema ? "Y" : "N"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-blue-50/30 dark:bg-blue-950/5">{p.week1.rutf ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-blue-50/30 dark:bg-blue-950/5">{p.week1.supplements ? "✓" : "—"}</td>
-                          </>
-                        )}
-                        {isEdema ? <td className="border-l-2 border-purple-300 dark:border-purple-800" colSpan={5} /> : (
-                          <>
-                            <td className="px-2 py-2.5 text-center text-xs border-l-2 border-purple-300 dark:border-purple-800 bg-purple-50/30 dark:bg-purple-950/5">{p.week2.weight ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-purple-50/30 dark:bg-purple-950/5">{p.week2.muac ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-purple-50/30 dark:bg-purple-950/5">{p.week2.edema ? "Y" : "N"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-purple-50/30 dark:bg-purple-950/5">{p.week2.rutf ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-purple-50/30 dark:bg-purple-950/5">{p.week2.supplements ? "✓" : "—"}</td>
-                          </>
-                        )}
-                        {isEdema ? <td className="border-l-2 border-orange-300 dark:border-orange-800" colSpan={5} /> : (
-                          <>
-                            <td className="px-2 py-2.5 text-center text-xs border-l-2 border-orange-300 dark:border-orange-800 bg-orange-50/30 dark:bg-orange-950/5">{p.week3.weight ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-orange-50/30 dark:bg-orange-950/5">{p.week3.muac ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-orange-50/30 dark:bg-orange-950/5">{p.week3.edema ? "Y" : "N"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-orange-50/30 dark:bg-orange-950/5">{p.week3.rutf ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-orange-50/30 dark:bg-orange-950/5">{p.week3.supplements ? "✓" : "—"}</td>
-                          </>
-                        )}
-                        {isEdema ? <td className="border-l-2 border-green-300 dark:border-green-800" colSpan={5} /> : (
-                          <>
-                            <td className="px-2 py-2.5 text-center text-xs border-l-2 border-green-300 dark:border-green-800 bg-green-50/30 dark:bg-green-950/5">{p.week4.weight ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-green-50/30 dark:bg-green-950/5">{p.week4.muac ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-green-50/30 dark:bg-green-950/5">{p.week4.edema ? "Y" : "N"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-green-50/30 dark:bg-green-950/5">{p.week4.rutf ?? "—"}</td>
-                            <td className="px-2 py-2.5 text-center text-xs bg-green-50/30 dark:bg-green-950/5">{p.week4.supplements ? "✓" : "—"}</td>
-                          </>
-                        )}
-                        <td className="px-2 py-2.5 text-center text-xs font-semibold border-l-2 border-border">{isEdema ? "—" : totalRutf(p)}</td>
-                        <td className="px-2 py-2.5 text-center">
-                          <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold ${getPercentageColor(p.diagnosis)}`}>{perc}%</span>
+                        <td className="min-w-[5.5rem] max-w-[8rem] px-2 py-2.5 align-top">
+                          <span className={`inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getDiagnosisColor(derived.diagnosis)}`} title={derived.diagnosis}>{derived.diagnosis}</span>
+                        </td>
+                        <td className="min-w-[8.5rem] px-2 py-2.5 align-top">
+                          <span
+                            className={`inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${
+                              typeBand === "Marasmic-Kwashiorkor"
+                                ? "bg-red-200 text-red-900 border-red-300 dark:bg-red-950/70 dark:text-red-300 dark:border-red-900"
+                                : typeBand === "Kwashiorkor"
+                                  ? "bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900"
+                                  : typeBand === "Marasmus"
+                                    ? "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-900"
+                                    : "bg-muted text-muted-foreground border-border"
+                            }`}
+                            title={typeBand}
+                          >
+                            {typeBand}
+                          </span>
+                        </td>
+                        <td className="min-w-[2.5rem] px-2 py-2.5 text-center text-muted-foreground whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSymptomsPatient(p);
+                            }}
+                            className="text-primary underline text-xs hover:opacity-70"
+                          >
+                            {p.symptoms.length}
+                          </button>
+                        </td>
+                        <td className="min-w-[3.25rem] px-2 py-2.5 text-center tabular-nums font-semibold whitespace-nowrap">{displayTotalRutf(p)}</td>
+                        <td className="min-w-[2.75rem] px-2 py-2.5 text-center whitespace-nowrap">
+                          <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold ${getPercentageColor(derived.diagnosis)}`}>{perc}%</span>
                         </td>
                       </tr>
                     );
                   })}
                   {filtered.length === 0 && (
                     <tr>
-                      <td colSpan={35} className="px-6 py-16 text-center text-muted-foreground text-sm">
+                      <td colSpan={17} className="px-6 py-16 text-center text-muted-foreground text-sm">
                         {groupPatients.length === 0
                           ? `No patients in the ${group.label} age range yet. Add patients with age between ${group.minMonths}–${group.maxMonths === 216 ? "216" : group.maxMonths} months.`
                           : "No patients match the current filters."}
@@ -590,26 +684,15 @@ export default function AgeGroupPage() {
       )}
 
       {/* ── Modals ── */}
-      {(showAddModal || selectedPatient) && (
-        <PatientModal
-          patient={selectedPatient}
-          onSave={handleSave}
-          onClose={() => { setShowAddModal(false); setSelectedPatient(null); }}
-        />
-      )}
       {detailPatient && (
         <PatientDetailModal
           patient={detailPatient}
-          onEdit={(p) => { setDetailPatient(null); setSelectedPatient(p); }}
-          onEditWeeks={(p) => { setDetailPatient(null); setWeeklyPatient(p); }}
-          onClose={() => setDetailPatient(null)}
-        />
-      )}
-      {weeklyPatient && (
-        <WeeklyUpdateModal
-          patient={weeklyPatient}
-          onSave={handleWeeklyUpdate}
-          onClose={() => setWeeklyPatient(null)}
+          isNew={detailIsNew}
+          onSave={handlePatientChartSave}
+          onClose={() => {
+            setDetailPatient(null);
+            setDetailIsNew(false);
+          }}
         />
       )}
       {symptomsPatient && (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { loadPatients, type Patient, GOVERNORATES } from "@/lib/data";
+import { loadPatients, type Patient, GOVERNORATES, getPatientDerivedAnthropometry } from "@/lib/data";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend, RadarChart, Radar, PolarGrid, PolarAngleAxis
@@ -17,9 +17,9 @@ export default function Analytics() {
   }, []);
 
   const total = patients.length;
-  const sam = patients.filter((p) => p.diagnosis === "SAM").length;
-  const mam = patients.filter((p) => p.diagnosis === "MAM").length;
-  const recovered = patients.filter((p) => p.diagnosis === "Recovered").length;
+  const sam = patients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "SAM").length;
+  const mam = patients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "MAM").length;
+  const recovered = patients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "Recovered").length;
   const deceased = patients.filter((p) => p.isDeceased).length;
   const deathRate = total > 0 ? ((deceased / total) * 100).toFixed(1) : "0.0";
   const recoveryRate = total > 0 ? ((recovered / total) * 100).toFixed(1) : "0.0";
@@ -30,7 +30,7 @@ export default function Analytics() {
     const map: Record<string, { SAM: number; MAM: number; Normal: number; Recovered: number; Deceased: number; total: number }> = {};
     patients.forEach((p) => {
       if (!map[p.governorate]) map[p.governorate] = { SAM: 0, MAM: 0, Normal: 0, Recovered: 0, Deceased: 0, total: 0 };
-      const d = p.diagnosis;
+      const d = getPatientDerivedAnthropometry(p).diagnosis;
       if (d === "SAM") map[p.governorate].SAM++;
       else if (d === "MAM") map[p.governorate].MAM++;
       else if (d === "Normal") map[p.governorate].Normal++;
@@ -49,7 +49,7 @@ export default function Analytics() {
     const map: Record<string, { SAM: number; MAM: number; Normal: number; Recovered: number; total: number }> = {};
     source.forEach((p) => {
       if (!map[p.district]) map[p.district] = { SAM: 0, MAM: 0, Normal: 0, Recovered: 0, total: 0 };
-      const d = p.diagnosis;
+      const d = getPatientDerivedAnthropometry(p).diagnosis;
       if (d === "SAM") map[p.district].SAM++;
       else if (d === "MAM") map[p.district].MAM++;
       else if (d === "Normal") map[p.district].Normal++;
@@ -63,17 +63,21 @@ export default function Analytics() {
 
   // Gender comparison
   const genderData = [
-    { name: "Male", SAM: patients.filter((p) => p.gender === "M" && p.diagnosis === "SAM").length, MAM: patients.filter((p) => p.gender === "M" && p.diagnosis === "MAM").length, Recovered: patients.filter((p) => p.gender === "M" && p.diagnosis === "Recovered").length },
-    { name: "Female", SAM: patients.filter((p) => p.gender === "F" && p.diagnosis === "SAM").length, MAM: patients.filter((p) => p.gender === "F" && p.diagnosis === "MAM").length, Recovered: patients.filter((p) => p.gender === "F" && p.diagnosis === "Recovered").length },
+    { name: "Male", SAM: patients.filter((p) => p.gender === "M" && getPatientDerivedAnthropometry(p).diagnosis === "SAM").length, MAM: patients.filter((p) => p.gender === "M" && getPatientDerivedAnthropometry(p).diagnosis === "MAM").length, Recovered: patients.filter((p) => p.gender === "M" && getPatientDerivedAnthropometry(p).diagnosis === "Recovered").length },
+    { name: "Female", SAM: patients.filter((p) => p.gender === "F" && getPatientDerivedAnthropometry(p).diagnosis === "SAM").length, MAM: patients.filter((p) => p.gender === "F" && getPatientDerivedAnthropometry(p).diagnosis === "MAM").length, Recovered: patients.filter((p) => p.gender === "F" && getPatientDerivedAnthropometry(p).diagnosis === "Recovered").length },
   ];
 
-  // Weekly improvement
+  // 12-week improvement
   const weeklyData = [
-    { week: "Initial", avgMuac: patients.reduce((a, p) => a + p.muac, 0) / (patients.length || 1) },
-    { week: "Week 1", avgMuac: patients.reduce((a, p) => a + (p.week1.muac ?? p.muac), 0) / (patients.length || 1) },
-    { week: "Week 2", avgMuac: patients.reduce((a, p) => a + (p.week2.muac ?? p.muac), 0) / (patients.length || 1) },
-    { week: "Week 3", avgMuac: patients.reduce((a, p) => a + (p.week3.muac ?? p.muac), 0) / (patients.length || 1) },
-    { week: "Week 4", avgMuac: patients.reduce((a, p) => a + (p.week4.muac ?? p.muac), 0) / (patients.length || 1) },
+    { week: "Initial", avgMuac: patients.reduce((a, p) => a + getPatientDerivedAnthropometry(p).muac, 0) / (patients.length || 1) },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      week: `Week ${index + 1}`,
+      avgMuac:
+        patients.reduce(
+          (acc, patient) => acc + (patient.treatmentWeeks[index]?.muac ?? patient.muac),
+          0,
+        ) / (patients.length || 1),
+    })),
   ].map((d) => ({ ...d, avgMuac: parseFloat(d.avgMuac.toFixed(2)) }));
 
   // Pie data
@@ -81,7 +85,7 @@ export default function Analytics() {
     { name: "SAM", value: sam, color: "#ef4444" },
     { name: "MAM", value: mam, color: "#f59e0b" },
     { name: "Recovered", value: recovered, color: "#10b981" },
-    { name: "Normal", value: patients.filter((p) => p.diagnosis === "Normal").length, color: "#3b82f6" },
+    { name: "Normal", value: patients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "Normal").length, color: "#3b82f6" },
     { name: "Deceased", value: deceased, color: "#6b7280" },
   ].filter((d) => d.value > 0);
 

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, BarChart3, Menu, X, Activity, Moon, Sun } from "lucide-react";
+import { LayoutDashboard, BarChart3, Menu, X, Moon, Sun } from "lucide-react";
 import { AGE_GROUP_LIST } from "@/lib/ageGroups";
 
 function NutriSmartLogo() {
@@ -38,7 +38,7 @@ function SidebarContent({ location, onNav, darkMode, onToggleDark }: {
         <Link
           href="/"
           onClick={onNav}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${isActive("/") && !location.startsWith("/group") && !location.startsWith("/patients") && !location.startsWith("/analytics") ? "bg-sidebar-primary text-sidebar-primary-foreground" : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"}`}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${isActive("/") && !location.startsWith("/group") && !location.startsWith("/analytics") ? "bg-sidebar-primary text-sidebar-primary-foreground" : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"}`}
         >
           <LayoutDashboard size={16} />
           Overview
@@ -69,16 +69,6 @@ function SidebarContent({ location, onNav, darkMode, onToggleDark }: {
 
         {/* Divider */}
         <div className="h-px bg-sidebar-border my-2" />
-
-        {/* All Patients */}
-        <Link
-          href="/patients"
-          onClick={onNav}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${isActive("/patients") ? "bg-sidebar-primary text-sidebar-primary-foreground" : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"}`}
-        >
-          <Users size={16} />
-          All Patients
-        </Link>
 
         {/* Analytics */}
         <Link
@@ -159,38 +149,21 @@ export default function Layout({ children, darkMode, onToggleDark }: Props) {
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        {/* Top Bar */}
-        <header className="h-14 border-b border-border flex items-center gap-3 px-4 bg-card/50 backdrop-blur-sm shrink-0 z-30">
+        <main className="relative flex-1 overflow-auto p-4 md:p-5">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="lg:hidden p-2 rounded-lg hover:bg-muted transition-colors"
+            className="fixed top-3 left-3 z-30 lg:hidden p-2 rounded-lg border border-border bg-card/80 backdrop-blur-sm hover:bg-muted transition-colors"
             data-testid="button-menu"
           >
             <Menu size={18} className="text-foreground" />
           </button>
-          <div className="flex-1">
-            <span className="text-sm font-semibold text-foreground hidden sm:block">NutriSmart — Yemen Nutrition Monitoring System</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
-              <Activity size={11} className="text-green-500" />
-              <span>PWA Active</span>
-            </div>
-            <button
-              onClick={onToggleDark}
-              className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground lg:hidden"
-              data-testid="button-toggle-dark-mobile"
-            >
-              {darkMode ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-            <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-bold">
-              HW
-            </div>
-          </div>
-        </header>
-
-        {/* Page content */}
-        <main className="flex-1 overflow-auto p-4 md:p-5">
+          <button
+            onClick={onToggleDark}
+            className="fixed top-3 left-14 z-30 lg:hidden p-2 rounded-lg border border-border bg-card/80 backdrop-blur-sm hover:bg-muted transition-colors text-muted-foreground"
+            data-testid="button-toggle-dark-mobile"
+          >
+            {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
           {children}
         </main>
       </div>

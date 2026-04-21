@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
-import { loadPatients, type Patient } from "@/lib/data";
+import { loadPatients, type Patient, patientHasClinicalEdema, getPatientDerivedAnthropometry } from "@/lib/data";
 import {
   AGE_GROUP_LIST, AGE_GROUPS, type AgeGroupConfig, type AgeGroupId,
   loadSponsors, formatAgeAuto,
@@ -14,7 +14,7 @@ import {
   Wifi, WifiOff, ArrowRight, Building2, Activity, MapPin, ChevronDown,
 } from "lucide-react";
 
-const WEEK_LABELS = ["Week 1", "Week 2", "Week 3", "Week 4"];
+const WEEK_LABELS = Array.from({ length: 12 }, (_, index) => `Week ${index + 1}`);
 const PIE_COLORS = ["#3b82f6", "#ec4899"];
 
 function StatCard({ label, value, icon, color, sub }: {
@@ -45,8 +45,6 @@ function AgeGroupCard({ group, patients, sponsorName, onClick }: {
       onClick={onClick}
       className={`group relative flex flex-col text-left w-full rounded-2xl border-2 ${group.borderClass} ${group.bgClass} p-6 hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 overflow-hidden`}
     >
-      <div className="absolute -right-2 -top-2 text-7xl opacity-10 select-none pointer-events-none">{group.emoji}</div>
-
       <div className="flex items-start justify-between mb-4">
         <div>
           <div className={`text-3xl font-black ${group.textClass}`}>{group.emoji}</div>
@@ -102,7 +100,10 @@ function AgeGroupCard({ group, patients, sponsorName, onClick }: {
 }
 
 function CriticalCasesFrame({ patients }: { patients: Patient[] }) {
-  const edemaPatients = useMemo(() => patients.filter((p) => p.edema && !p.isDeceased), [patients]);
+  const edemaPatients = useMemo(
+    () => patients.filter((p) => patientHasClinicalEdema(p) && !p.isDeceased),
+    [patients],
+  );
   const [govFilter, setGovFilter] = useState("All");
 
   const govs = useMemo(() => {
@@ -183,7 +184,7 @@ function CriticalCasesFrame({ patients }: { patients: Patient[] }) {
                     <span>{p.district}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span>MUAC: <span className="font-semibold text-red-600 dark:text-red-400">{p.muac} cm</span></span>
+                    <span>MUAC: <span className="font-semibold text-red-600 dark:text-red-400">{getPatientDerivedAnthropometry(p).muac} cm</span></span>
                     <span>Age: <span className="font-semibold text-foreground">{displayAge}</span></span>
                   </div>
                 </div>
@@ -235,9 +236,9 @@ export default function Dashboard() {
     }, 1800);
   }
 
-  const sam = patients.filter((p) => p.diagnosis === "SAM").length;
-  const mam = patients.filter((p) => p.diagnosis === "MAM").length;
-  const recovered = patients.filter((p) => p.diagnosis === "Recovered").length;
+  const sam = patients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "SAM").length;
+  const mam = patients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "MAM").length;
+  const recovered = patients.filter((p) => getPatientDerivedAnthropometry(p).diagnosis === "Recovered").length;
   const deaths = patients.filter((p) => p.isDeceased).length;
   const recoveryRate = patients.length > 0 ? ((recovered / patients.length) * 100).toFixed(1) : "0";
 
@@ -245,9 +246,10 @@ export default function Dashboard() {
     const map: Record<string, { name: string; SAM: number; MAM: number; Recovered: number; Normal: number }> = {};
     patients.forEach((p) => {
       if (!map[p.governorate]) map[p.governorate] = { name: p.governorate, SAM: 0, MAM: 0, Recovered: 0, Normal: 0 };
-      if (p.diagnosis === "SAM") map[p.governorate].SAM++;
-      else if (p.diagnosis === "MAM") map[p.governorate].MAM++;
-      else if (p.diagnosis === "Recovered") map[p.governorate].Recovered++;
+      const d = getPatientDerivedAnthropometry(p).diagnosis;
+      if (d === "SAM") map[p.governorate].SAM++;
+      else if (d === "MAM") map[p.governorate].MAM++;
+      else if (d === "Recovered") map[p.governorate].Recovered++;
       else map[p.governorate].Normal++;
     });
     return Object.values(map);
@@ -259,8 +261,9 @@ export default function Dashboard() {
   ], [patients]);
 
   const weeklyData = useMemo(() => WEEK_LABELS.map((label, wi) => {
-    const key = `week${wi + 1}` as "week1" | "week2" | "week3" | "week4";
-    const muacs = patients.filter((p) => !p.edema && p[key].muac).map((p) => p[key].muac as number);
+    const muacs = patients
+      .filter((p) => !patientHasClinicalEdema(p) && p.treatmentWeeks[wi]?.muac)
+      .map((p) => p.treatmentWeeks[wi].muac as number);
     const avg = muacs.length ? parseFloat((muacs.reduce((a, b) => a + b, 0) / muacs.length).toFixed(2)) : 0;
     return { label, avgMuac: avg };
   }), [patients]);
@@ -317,21 +320,6 @@ export default function Dashboard() {
             />
           ))}
         </div>
-        <button
-          onClick={() => navigate("/patients")}
-          className="mt-3 w-full flex items-center justify-between px-5 py-4 rounded-xl border border-border bg-card hover:bg-muted/50 transition-colors shadow-sm group"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
-              <Users size={18} className="text-muted-foreground" />
-            </div>
-            <div className="text-left">
-              <div className="text-sm font-bold text-foreground">All Patients</div>
-              <div className="text-xs text-muted-foreground">Complete registry — {patients.length} patients across all age groups</div>
-            </div>
-          </div>
-          <ArrowRight size={16} className="text-muted-foreground group-hover:translate-x-1 transition-transform" />
-        </button>
       </div>
 
       {/* ── Critical Cases Frame ── */}
@@ -371,7 +359,7 @@ export default function Dashboard() {
 
       {/* ── Weekly MUAC Trend ── */}
       <div className="bg-card border border-border rounded-xl p-4 shadow-sm shrink-0">
-        <h3 className="text-sm font-semibold text-foreground mb-4">Average MUAC Trend — Weekly Progress (All Patients)</h3>
+        <h3 className="text-sm font-semibold text-foreground mb-4">Average MUAC Trend — Weekly progress (all age groups)</h3>
         <ResponsiveContainer width="100%" height={180}>
           <LineChart data={weeklyData} margin={{ top: 0, right: 20, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.08} />
