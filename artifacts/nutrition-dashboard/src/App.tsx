@@ -7,6 +7,7 @@ import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Analytics from "@/pages/Analytics";
 import AgeGroupPage from "@/pages/AgeGroupPage";
+import SettingsPage from "@/pages/SettingsPage";
 import NotFound from "@/pages/not-found";
 import PublicHomePage from "@/pages/PublicHomePage";
 import SystemEntryPage from "@/pages/SystemEntryPage";
@@ -30,6 +31,7 @@ function OtcSystemRoutes({
         <Route path="/" component={Dashboard} />
         <Route path="/group/:groupId" component={AgeGroupPage} />
         <Route path="/analytics" component={Analytics} />
+        <Route path="/settings" component={SettingsPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

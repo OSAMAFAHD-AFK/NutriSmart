@@ -1,11 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Minus, X, CalendarCheck } from "lucide-react";
 import type { ClinicalEdemaGrade } from "@/lib/patientMedicalProfile";
 import {
   createEmptyWeekData,
   type Patient,
   calcRutfAmount,
-  TREATMENT_WEEKS_COUNT,
   FOLLOW_UP_OUTCOME_OPTIONS,
   FOLLOW_UP_OUTCOME_DEATH,
   withPatientDeathRecorded,
@@ -25,16 +24,20 @@ type Props = {
   onClose: () => void;
 };
 
-const WEEKS = Array.from({ length: TREATMENT_WEEKS_COUNT }, (_, index) => ({
-  key: index,
-  label: `Week ${index + 1}`,
-}));
-
 const WEEKLY_DISPOSITION_LABEL = "Weekly recovery disposition";
 const WEEKLY_DISPOSITION_HINT = "متابعة التعافي الأسبوعية";
 
 export default function WeeklyUpdateModal({ patient, onSave, onClose }: Props) {
   const [selectedWeek, setSelectedWeek] = useState(0);
+  const gridLen = patient.treatmentWeeks.length;
+  const weekSlots = useMemo(
+    () =>
+      Array.from({ length: gridLen }, (_, index) => ({
+        key: index,
+        label: `Week ${index + 1}`,
+      })),
+    [gridLen],
+  );
   const weekData = patient.treatmentWeeks[selectedWeek] ?? createEmptyWeekData();
   const infant = isInfantUnder6Months(patient);
 
@@ -47,7 +50,7 @@ export default function WeeklyUpdateModal({ patient, onSave, onClose }: Props) {
 
   const wNum = parseFloat(weight) || 0;
   const rutf = !infant && wNum ? calcRutfAmount(wNum) : weekData.rutf ?? 0;
-  const showHeight = isHeightCaptureWeekIndex(selectedWeek);
+  const showHeight = isHeightCaptureWeekIndex(selectedWeek, gridLen);
   const showDisposition = selectedWeek >= 1;
   const weightTrend =
     selectedWeek >= 1 ? weightTrendVsPriorWeek(patient.treatmentWeeks, selectedWeek) : "none";
@@ -170,7 +173,7 @@ export default function WeeklyUpdateModal({ patient, onSave, onClose }: Props) {
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-2">Select Week</label>
             <div className="grid grid-cols-4 gap-2">
-              {WEEKS.map((w) => (
+              {weekSlots.map((w) => (
                 <button
                   key={w.key}
                   type="button"

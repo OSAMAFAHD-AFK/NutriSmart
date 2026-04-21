@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
 import {
   loadPatients,
@@ -13,6 +13,10 @@ import {
   patientHasClinicalEdema,
   formatEdemaForTable,
   getPatientDerivedAnthropometry,
+  getLatestFollowUpOutcome,
+  formatFollowUpOutcomeShort,
+  formatFollowUpOutcomeFull,
+  getPatientWeightGainRate,
 } from "@/lib/data";
 import {
   heightMeasureShortLabel,
@@ -22,7 +26,15 @@ import {
   classifyWazAsStuntingBand,
   classifyNutritionTypeBand,
 } from "@/lib/patientTableAnthro";
-import { AGE_GROUPS, type AgeGroupId, formatAge, loadSponsors, saveSponsor, getDefaultSponsorName } from "@/lib/ageGroups";
+import {
+  loadPrograms,
+  savePrograms,
+  touchProgramUsage,
+  type AgeGroupId,
+  formatAge,
+  getProgramAgeBandLabelEn,
+  formatProgramCreatedAtForUi,
+} from "@/lib/ageGroups";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -30,7 +42,7 @@ import {
 import {
   Plus, Search, AlertCircle, Users,
   BarChart3, TableIcon, Building2, TrendingUp, Skull, Heart, ArrowLeft,
-  Pencil, Check, X as XIcon, FileSpreadsheet, FileText,
+  FileSpreadsheet, FileText, Pencil, Trash2, Check, X,
 } from "lucide-react";
 import PatientDetailModal from "@/components/PatientDetailModal";
 import { patientTableClass, patientTableScrollClass } from "@/lib/patientDirectoryTableClasses";
@@ -59,51 +71,37 @@ export default function AgeGroupPage() {
   const params = useParams<{ groupId: string }>();
   const [, navigate] = useLocation();
   const groupId = params.groupId as AgeGroupId;
-  const group = AGE_GROUPS[groupId];
 
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [programs, setPrograms] = useState(() => loadPrograms());
   const [activeTab, setActiveTab] = useState<"patients" | "analytics">("patients");
   const [search, setSearch] = useState("");
   const [diagnosisFilter, setDiagnosisFilter] = useState("All");
+  const [tableView, setTableView] = useState<"recent" | "monthly">("recent");
   const [detailPatient, setDetailPatient] = useState<Patient | null>(null);
   const [detailIsNew, setDetailIsNew] = useState(false);
   const [symptomsPatient, setSymptomsPatient] = useState<Patient | null>(null);
-  const [sponsorName, setSponsorName] = useState("");
-  const [isEditingSponsor, setIsEditingSponsor] = useState(false);
-  const [editValue, setEditValue] = useState("");
+  const [isEditingProgram, setIsEditingProgram] = useState(false);
+  const [programEdit, setProgramEdit] = useState({ label: "", sponsor: "" });
+  const group = programs.find((p) => p.id === groupId);
 
   useEffect(() => {
     setPatients(loadPatients());
+    setPrograms(loadPrograms());
   }, []);
 
-  useEffect(() => {
-    if (groupId) {
-      const sponsors = loadSponsors();
-      setSponsorName(sponsors[groupId] ?? getDefaultSponsorName(groupId));
-    }
+  useLayoutEffect(() => {
+    if (!groupId) return;
+    const exists = loadPrograms().some((p) => p.id === groupId);
+    if (!exists) return;
+    touchProgramUsage(groupId);
   }, [groupId]);
-
-  function handleSponsorEdit() {
-    setEditValue(sponsorName);
-    setIsEditingSponsor(true);
-  }
-
-  function handleSponsorSave() {
-    const trimmed = editValue.trim() || getDefaultSponsorName(groupId);
-    setSponsorName(trimmed);
-    saveSponsor(groupId, trimmed);
-    setIsEditingSponsor(false);
-  }
-
-  function handleSponsorCancel() {
-    setIsEditingSponsor(false);
-  }
 
   if (!group) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
-        <div className="text-4xl">❓</div>
-        <div className="text-lg font-semibold text-foreground">Age group not found</div>
+      <div className="text-4xl">❓</div>
+      <div className="text-lg font-semibold text-foreground">Program not found</div>
         <button onClick={() => navigate("/")} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90">
           <ArrowLeft size={14} /> Back to Overview
         </button>
@@ -112,7 +110,10 @@ export default function AgeGroupPage() {
   }
 
   const groupPatients = useMemo(
-    () => patients.filter((p) => p.ageMonths >= group.minMonths && p.ageMonths < group.maxMonths),
+    () => {
+      if (!group) return [];
+      return patients.filter((p) => p.programId === group.id);
+    },
     [patients, group]
   );
 
@@ -126,6 +127,44 @@ export default function AgeGroupPage() {
       return matchSearch && matchDiag;
     });
   }, [groupPatients, search, diagnosisFilter]);
+
+  function getTimeMs(v: string | undefined): number {
+    if (!v) return 0;
+    const t = new Date(v).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  }
+
+  const tableRows = useMemo(() => {
+    if (tableView === "recent") {
+      return [...filtered]
+        .sort((a, b) => {
+          const ta = getTimeMs(a.updatedAt) || getTimeMs(a.lastVisitDate) || getTimeMs(a.createdAt);
+          const tb = getTimeMs(b.updatedAt) || getTimeMs(b.lastVisitDate) || getTimeMs(b.createdAt);
+          return tb - ta;
+        })
+        .map((p) => ({ kind: "patient" as const, patient: p }));
+    }
+
+    const sortedByCreated = [...filtered].sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
+    const rows: Array<{ kind: "month"; key: string; label: string } | { kind: "patient"; patient: Patient }> = [];
+    let lastMonthKey = "";
+
+    for (const p of sortedByCreated) {
+      const d = p.createdAt ? new Date(p.createdAt) : new Date(0);
+      const monthKey = Number.isNaN(d.getTime())
+        ? "unknown"
+        : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (monthKey !== lastMonthKey) {
+        const monthLabel = Number.isNaN(d.getTime())
+          ? "Unknown month"
+          : d.toLocaleString("en-GB", { month: "short", year: "numeric" });
+        rows.push({ kind: "month", key: monthKey, label: monthLabel });
+        lastMonthKey = monthKey;
+      }
+      rows.push({ kind: "patient", patient: p });
+    }
+    return rows;
+  }, [filtered, tableView]);
 
   const stats = useMemo(() => ({
     total: groupPatients.length,
@@ -168,19 +207,21 @@ export default function AgeGroupPage() {
     "Could not save data (browser storage may be full). Try removing some document photos from patients, then save again.";
 
   function handleSymptomsUpdate(updated: Patient) {
-    const list = patients.map((p) => (p.id === updated.id ? updated : p));
+    const stamped: Patient = { ...updated, updatedAt: new Date().toISOString() };
+    const list = patients.map((p) => (p.id === stamped.id ? stamped : p));
     if (!savePatients(list)) {
       window.alert(STORAGE_SAVE_FAILED);
       return;
     }
     setPatients(list);
     setSymptomsPatient(null);
-    setDetailPatient((cur) => (cur && cur.id === updated.id ? updated : cur));
+    setDetailPatient((cur) => (cur && cur.id === stamped.id ? stamped : cur));
   }
 
   function handlePatientChartSave(updated: Patient) {
+    const stamped: Patient = { ...updated, updatedAt: new Date().toISOString() };
     if (detailIsNew) {
-      const next = [...patients, updated];
+      const next = [...patients, stamped];
       if (!savePatients(next)) {
         window.alert(STORAGE_SAVE_FAILED);
         return;
@@ -189,14 +230,53 @@ export default function AgeGroupPage() {
       setDetailPatient(null);
       setDetailIsNew(false);
     } else {
-      const list = patients.map((p) => (p.id === updated.id ? updated : p));
+      const list = patients.map((p) => (p.id === stamped.id ? stamped : p));
       if (!savePatients(list)) {
         window.alert(STORAGE_SAVE_FAILED);
         return;
       }
       setPatients(list);
-      setDetailPatient(updated);
+      setDetailPatient(stamped);
     }
+  }
+
+  function startProgramEdit() {
+    if (!group) return;
+    setProgramEdit({ label: group.label, sponsor: group.sponsor });
+    setIsEditingProgram(true);
+  }
+
+  function saveProgramEdit() {
+    if (!group) return;
+    const label = programEdit.label.trim();
+    const sponsor = programEdit.sponsor.trim();
+    if (!label || !sponsor) {
+      window.alert("Program name and donor are required.");
+      return;
+    }
+    const nextPrograms = programs.map((p) => (p.id === group.id ? { ...p, label, sponsor } : p));
+    savePrograms(nextPrograms);
+    setPrograms(nextPrograms);
+    setIsEditingProgram(false);
+  }
+
+  function deleteProgram() {
+    if (!group) return;
+    const linkedCount = patients.filter((p) => p.programId === group.id).length;
+    const ok = window.confirm(
+      `Delete "${group.label}" completely?\n\nThis will also delete ${linkedCount} linked patient record(s). This action cannot be undone.`,
+    );
+    if (!ok) return;
+    const nextPrograms = programs.filter((p) => p.id !== group.id);
+    const nextPatients = patients.filter((p) => p.programId !== group.id);
+    savePrograms(nextPrograms);
+    if (!savePatients(nextPatients)) {
+      window.alert(STORAGE_SAVE_FAILED);
+      return;
+    }
+    setPrograms(nextPrograms);
+    setPatients(nextPatients);
+    navigate("/");
   }
 
   function displayTotalRutf(p: Patient): string {
@@ -205,7 +285,7 @@ export default function AgeGroupPage() {
     return n > 0 ? String(n) : "0";
   }
 
-  const heightColShort = group.id === "0-2" ? "L" : "H";
+  const heightColShort = group.minMonths === 0 ? "L" : "H";
 
   const malnutritionRate = stats.total > 0 ? Math.round(((stats.sam + stats.mam) / stats.total) * 100) : 0;
   const exportRows = useMemo(
@@ -214,6 +294,7 @@ export default function AgeGroupPage() {
         const d = getPatientDerivedAnthropometry(p);
         const whz = stubWeightForHeightZ({ ...p, weight: d.weight, height: d.height });
         const hasEdema = patientHasClinicalEdema(p);
+        const wg = getPatientWeightGainRate(p);
         const nutritionType = classifyNutritionTypeBand({
           edema: hasEdema,
           whz,
@@ -228,11 +309,14 @@ export default function AgeGroupPage() {
         WeightKg: d.weight,
         HeightCm: d.height,
         WHZ: whz,
-        HAZ: stubWeightForAgeZ({ ...p, weight: d.weight }),
-        HAZ_result: classifyWazAsStuntingBand(stubWeightForAgeZ({ ...p, weight: d.weight })),
+        HAZ: stubWeightForAgeZ({ ...p, height: d.height }),
+        HAZ_result: classifyWazAsStuntingBand(stubWeightForAgeZ({ ...p, height: d.height })),
         MUAC: isInfantUnder6Months(p) ? "" : d.muac,
         Edema: formatEdemaForTable(p),
         Diagnosis: d.diagnosis,
+        FollowUp_Outcome: formatFollowUpOutcomeShort(getLatestFollowUpOutcome(p)),
+        WeightGainRate_gkgday: wg.rate ?? "",
+        RecoveryPace: wg.status,
         Type: nutritionType,
         SymptomsCount: p.symptoms.length,
         TotalRUTF_weeklySum: displayTotalRutf(p),
@@ -244,68 +328,99 @@ export default function AgeGroupPage() {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-3">
 
       {/* ── Page Header ── */}
       <div className="shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate("/")}
-              className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
-              title="Back to Overview"
-            >
-              <ArrowLeft size={16} />
-            </button>
-            <div>
-              <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-                <span className="text-2xl">{group.emoji}</span>
-                {group.label}
-                <span className="text-sm font-normal text-muted-foreground ml-1">— {group.description}</span>
-              </h1>
-              <p className="text-sm text-muted-foreground mt-0.5">{stats.total} patients in this age group</p>
-            </div>
-          </div>
-
-          {/* Donor/Sponsor Badge — editable */}
-          <div className={`flex items-start gap-2.5 px-4 py-2.5 rounded-xl border ${group.bgClass} ${group.borderClass} shrink-0 max-w-xs`}>
-            <Building2 size={14} className={`${group.textClass} shrink-0 mt-1`} />
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-muted-foreground mb-0.5">Supported by</div>
-              {isEditingSponsor ? (
-                <div className="flex flex-col gap-1.5">
-                  <input
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleSponsorSave(); if (e.key === "Escape") handleSponsorCancel(); }}
-                    autoFocus
-                    className="text-sm w-full rounded-md border border-border bg-card text-foreground px-2 py-1 focus:outline-none focus:ring-2 focus:ring-ring"
-                    placeholder="Donor / organization name"
-                  />
-                  <div className="flex gap-1">
-                    <button onClick={handleSponsorSave} className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-primary text-primary-foreground font-medium hover:opacity-90">
-                      <Check size={11} /> Save
-                    </button>
-                    <button onClick={handleSponsorCancel} className="flex items-center gap-1 px-2 py-1 rounded text-xs border border-border text-muted-foreground hover:bg-muted">
-                      <XIcon size={11} /> Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-start gap-1.5">
-                  <div className={`text-sm font-bold ${group.textClass} break-words min-w-0`}>{sponsorName}</div>
+        <div className={`rounded-xl border p-4 shadow-sm ${group.bgClass} ${group.borderClass}`}>
+          <div className="flex items-start gap-2.5">
+              <span className="text-2xl leading-none">{group.emoji}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={handleSponsorEdit}
-                    className="shrink-0 p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors mt-0.5"
-                    title="Edit donor name"
+                    onClick={() => navigate("/")}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    title="Back to Overview"
                   >
-                    <Pencil size={11} className="text-muted-foreground" />
+                    <ArrowLeft size={13} />
+                    Back
                   </button>
+                  <h1 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-2xl font-bold text-foreground">
+                    <span className="break-words">{group.label}</span>
+                    <span className="text-sm font-normal text-muted-foreground">— {group.description}</span>
+                  </h1>
                 </div>
-              )}
+                <p className="mt-0.5 text-sm text-muted-foreground">{stats.total} patients in this program</p>
+
+                {isEditingProgram ? (
+                  <div className="mt-3 space-y-2 rounded-lg border border-border/70 bg-background/75 p-3">
+                    <input
+                      className="w-full rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs text-foreground"
+                      value={programEdit.label}
+                      onChange={(e) => setProgramEdit((s) => ({ ...s, label: e.target.value }))}
+                      placeholder="Program name"
+                    />
+                    <input
+                      className="w-full rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs text-foreground"
+                      value={programEdit.sponsor}
+                      onChange={(e) => setProgramEdit((s) => ({ ...s, sponsor: e.target.value }))}
+                      placeholder="Donor / organization"
+                    />
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={saveProgramEdit}
+                        className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground"
+                      >
+                        <Check size={11} />
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setIsEditingProgram(false)}
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground"
+                      >
+                        <X size={11} />
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className={`inline-flex items-center rounded-md border px-2 py-1 font-semibold ${group.textClass} bg-background/70`}>
+                        <Building2 size={12} className="mr-1" />
+                        {group.sponsor}
+                      </span>
+                      <span className="inline-flex items-center rounded-md border border-border bg-background/70 px-2 py-1 text-muted-foreground">
+                        Target age: {getProgramAgeBandLabelEn(group)}
+                      </span>
+                      <span className="inline-flex items-center rounded-md border border-border bg-background/70 px-2 py-1 text-muted-foreground">
+                        {group.governorate} — {group.district}
+                      </span>
+                      <span className="inline-flex items-center rounded-md border border-border bg-background/70 px-2 py-1 text-muted-foreground">
+                        Created: {formatProgramCreatedAtForUi(group.createdAt)}
+                      </span>
+                      <div className="ml-auto flex items-center gap-1">
+                        <button
+                          onClick={startProgramEdit}
+                          className="inline-flex items-center gap-1 rounded-md border border-blue-200/80 bg-blue-50/70 px-2 py-1 text-[11px] font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-900/70 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-900/40"
+                        >
+                          <Pencil size={11} />
+                          Edit
+                        </button>
+                        <button
+                          onClick={deleteProgram}
+                          className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-red-50/75 px-2 py-1 text-[11px] font-semibold text-red-700 transition-colors hover:bg-red-100 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300 dark:hover:bg-red-900/35"
+                        >
+                          <Trash2 size={11} />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
         {/* ── Mini Stats Row ── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mt-4">
@@ -337,7 +452,7 @@ export default function AgeGroupPage() {
 
       {/* ── Patients Tab ── */}
       {activeTab === "patients" && (
-        <div className="flex flex-col gap-3 flex-1 min-h-0">
+        <div className="flex flex-col gap-2.5 flex-1 min-h-0">
           {/* Filters Row */}
           <div className="flex flex-col sm:flex-row gap-3 shrink-0">
             <div className="relative flex-1">
@@ -363,7 +478,12 @@ export default function AgeGroupPage() {
             </select>
             <button
               onClick={() => {
-                setDetailPatient(createDraftPatient(nextSequentialPatientId(patients)));
+                setDetailPatient(
+                  createDraftPatient(nextSequentialPatientId(patients), {
+                    programId: group.id,
+                    followUpInterval: group.followUpInterval,
+                  }),
+                );
                 setDetailIsNew(true);
               }}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity shadow-sm shrink-0"
@@ -372,48 +492,70 @@ export default function AgeGroupPage() {
             </button>
           </div>
 
-          <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground shrink-0">
-            <span>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-1 text-xs text-muted-foreground shrink-0">
+            <span className="shrink-0">
               {filtered.length} of {groupPatients.length} patients shown — click any row to view details
             </span>
             {stats.edema > 0 && (
-              <span className="inline-flex items-center gap-1.5 text-red-700 dark:text-red-400">
+              <span className="inline-flex items-center gap-1.5 text-red-700 dark:text-red-400 shrink-0">
                 <AlertCircle size={12} className="shrink-0" />
                 <span>
                   <span className="font-semibold">{stats.edema} patient(s) with Edema</span> — refer to hospital immediately.
                 </span>
               </span>
             )}
+            <div className="ml-auto flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setTableView("recent")}
+                className={`inline-flex items-center rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
+                  tableView === "recent"
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-border text-foreground hover:bg-muted"
+                }`}
+              >
+                Recently Updated
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableView("monthly")}
+                className={`inline-flex items-center rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
+                  tableView === "monthly"
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-border text-foreground hover:bg-muted"
+                }`}
+              >
+                New by Month
+              </button>
+              <button
+                type="button"
+                onClick={() => exportRowsToExcel(`${group.id}-patients-export`, exportRows)}
+                disabled={exportRows.length === 0}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FileSpreadsheet size={12} />
+                Export Excel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  exportRowsToPdf(
+                    `${group.id}-patients-export`,
+                    `${group.label} Patients Export`,
+                    exportRows,
+                  )
+                }
+                disabled={exportRows.length === 0}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FileText size={12} />
+                Export PDF
+              </button>
+            </div>
           </div>
 
           {/* Table */}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2 shrink-0 bg-card">
-            <button
-              type="button"
-              onClick={() => exportRowsToExcel(`${group.id}-patients-export`, exportRows)}
-              disabled={exportRows.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <FileSpreadsheet size={13} />
-              Export Excel
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                exportRowsToPdf(
-                  `${group.id}-patients-export`,
-                  `${group.label} Patients Export`,
-                  exportRows,
-                )
-              }
-              disabled={exportRows.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <FileText size={13} />
-              Export PDF
-            </button>
-          </div>
             <div className={patientTableScrollClass}>
               <table className={patientTableClass}>
                 <thead className="sticky top-0 z-10">
@@ -428,7 +570,7 @@ export default function AgeGroupPage() {
                     <th className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium" title="Weight (kg)">W</th>
                     <th
                       className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium"
-                      title={group.id === "0-2" ? "Length (cm)" : "Height (cm)"}
+                      title={group.minMonths === 0 ? "Length (cm)" : "Height (cm)"}
                     >
                       {heightColShort}
                     </th>
@@ -436,10 +578,22 @@ export default function AgeGroupPage() {
                     <th className="min-w-[2.75rem] px-2 py-2.5 text-center font-medium" title="Display stub">
                       HAZ
                     </th>
-                    <th className="min-w-[7.75rem] px-2 py-2.5 text-left font-medium">HAZ result</th>
+                    <th className="min-w-[7.75rem] px-2 py-2.5 text-left font-medium">HAZ Result</th>
                     <th className="min-w-[3rem] px-2 py-2.5 text-center font-medium">MUAC</th>
                     <th className="min-w-[3.25rem] px-2 py-2.5 text-center font-medium">Edema</th>
                     <th className="min-w-[5.5rem] px-2 py-2.5 text-left font-medium" title="Nutrition diagnosis">Diagnosis</th>
+                    <th
+                      className="min-w-[4.5rem] px-2 py-2.5 text-center font-medium"
+                      title="Latest weekly recovery disposition abbreviation"
+                    >
+                      Follow-up
+                    </th>
+                    <th
+                      className="min-w-[6rem] px-2 py-2.5 text-center font-medium"
+                      title="Weight Gain Rate interpretation (Good / Moderate / Poor)"
+                    >
+                      Recovery Pace
+                    </th>
                     <th className="min-w-[8.5rem] px-2 py-2.5 text-left font-medium">Type</th>
                     <th className="min-w-[5.5rem] px-2 py-2.5 text-center font-medium" title="Count of selected program symptoms — click cell to edit">
                       Symptoms
@@ -454,13 +608,28 @@ export default function AgeGroupPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((p) => {
+                  {tableRows.map((row) => {
+                    if (row.kind === "month") {
+                      return (
+                        <tr key={`month-${row.key}`}>
+                          <td colSpan={19} className="px-2 py-2 bg-muted/25">
+                            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              <span className="h-px flex-1 bg-border/60" />
+                              <span>{row.label}</span>
+                              <span className="h-px flex-1 bg-border/60" />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    const p = row.patient;
                     const derived = getPatientDerivedAnthropometry(p);
                     const isEdema = patientHasClinicalEdema(p);
                     const edemaLabel = formatEdemaForTable(p);
                     const perc = calcPercentageForPatient(p);
                     const whzStub = stubWeightForHeightZ({ ...p, weight: derived.weight, height: derived.height });
-                    const wazStub = stubWeightForAgeZ({ ...p, weight: derived.weight });
+                    const wazStub = stubWeightForAgeZ({ ...p, height: derived.height });
                     const wazBand = classifyWazAsStuntingBand(wazStub);
                     const typeBand = classifyNutritionTypeBand({
                       edema: isEdema,
@@ -474,7 +643,7 @@ export default function AgeGroupPage() {
                           setDetailPatient(p);
                           setDetailIsNew(false);
                         }}
-                        className={`border-b border-border/60 hover:bg-muted/40 transition-colors cursor-pointer ${isEdema ? "bg-red-100/80 dark:bg-red-950/30" : ""} ${p.isDeceased ? "opacity-60" : ""}`}
+                        className={`group/row cursor-pointer border-b border-border/60 transition-colors duration-150 ${isEdema ? "bg-red-100/80 dark:bg-red-950/30" : ""} ${p.isDeceased ? "opacity-60" : ""} hover:[&>td]:bg-primary/[0.07] dark:hover:[&>td]:bg-primary/[0.14] hover:[&>td:first-child]:shadow-[inset_2px_0_0_0_rgba(59,130,246,0.65)] hover:[&>td:last-child]:shadow-[inset_-2px_0_0_0_rgba(59,130,246,0.45)]`}
                       >
                         <td className="min-w-[2.75rem] px-2 py-2.5 text-center tabular-nums font-mono text-muted-foreground whitespace-nowrap">{p.id}</td>
                         <td className="min-w-[10rem] max-w-[16rem] px-2 py-2.5 align-top font-medium text-foreground">
@@ -505,9 +674,9 @@ export default function AgeGroupPage() {
                         <td className="min-w-[7.75rem] px-2 py-2.5 text-left whitespace-nowrap">
                           <span
                             className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                              wazBand.startsWith("🔴")
+                              wazBand.startsWith("Severe")
                                 ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
-                                : wazBand.startsWith("🟠")
+                                : wazBand.startsWith("Moderate")
                                   ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
                                   : "bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300"
                             }`}
@@ -528,6 +697,53 @@ export default function AgeGroupPage() {
                         </td>
                         <td className="min-w-[5.5rem] max-w-[8rem] px-2 py-2.5 align-top">
                           <span className={`inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getDiagnosisColor(derived.diagnosis)}`} title={derived.diagnosis}>{derived.diagnosis}</span>
+                        </td>
+                        <td className="min-w-[4.5rem] px-2 py-2.5 text-center whitespace-nowrap">
+                          {(() => {
+                            const latestOutcome = getLatestFollowUpOutcome(p);
+                            const shortOutcome = formatFollowUpOutcomeShort(latestOutcome);
+                            const fullOutcome = formatFollowUpOutcomeFull(latestOutcome);
+                            const outcomeColor =
+                              shortOutcome === "C"
+                                ? "bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300"
+                                : shortOutcome === "D"
+                                  ? "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                                  : shortOutcome === "REF" || shortOutcome === "RR"
+                                    ? "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                                    : shortOutcome === "DEF" || shortOutcome === "AP"
+                                      ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                                      : "bg-muted text-muted-foreground";
+                            return (
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${outcomeColor}`}
+                                title={fullOutcome}
+                              >
+                                {shortOutcome}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="min-w-[6rem] px-2 py-2.5 text-center whitespace-nowrap">
+                          {(() => {
+                            const wg = getPatientWeightGainRate(p);
+                            const paceColor =
+                              wg.status === "Good"
+                                ? "bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300"
+                                : wg.status === "Moderate"
+                                  ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                                  : wg.status === "Poor"
+                                    ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                                    : "bg-muted text-muted-foreground";
+                            const rateTitle =
+                              wg.rate != null
+                                ? `Weight Gain Rate: ${wg.rate} g/kg/day`
+                                : "Weight Gain Rate not available yet";
+                            return (
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${paceColor}`} title={rateTitle}>
+                                {wg.status}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="min-w-[8.5rem] px-2 py-2.5 align-top">
                           <span
@@ -566,9 +782,9 @@ export default function AgeGroupPage() {
                   })}
                   {filtered.length === 0 && (
                     <tr>
-                      <td colSpan={17} className="px-6 py-16 text-center text-muted-foreground text-sm">
+                      <td colSpan={19} className="px-6 py-16 text-center text-muted-foreground text-sm">
                         {groupPatients.length === 0
-                          ? `No patients in the ${group.label} age range yet. Add patients with age between ${group.minMonths}–${group.maxMonths === 216 ? "216" : group.maxMonths} months.`
+                          ? `No patients enrolled in ${group.label} yet. Use Add Patient to register the first case.`
                           : "No patients match the current filters."}
                       </td>
                     </tr>

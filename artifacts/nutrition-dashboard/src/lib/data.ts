@@ -4,6 +4,7 @@ import {
   mergeMedicalHistory,
   type HealthCenterDistance,
 } from "./patientMedicalProfile";
+import { loadPrograms } from "@/lib/ageGroups";
 
 export type Diagnosis = "SAM" | "MAM" | "Normal" | "Recovered" | "Deceased";
 
@@ -29,11 +30,128 @@ export const FOLLOW_UP_OUTCOME_OPTIONS: { value: FollowUpOutcome; label: string 
   { value: "Death", label: "D - Death" },
 ];
 
-/** 12-week grid: height/length captured only on weeks 4, 8, and 12 (1-based). */
+const FOLLOW_UP_OUTCOME_SHORT: Record<Exclude<FollowUpOutcome, "">, string> = {
+  Continuing_treatment: "SP",
+  Absent: "AP",
+  Referred_hospital: "REF",
+  Refused_case: "RR",
+  Defaulted: "DEF",
+  Recovered: "C",
+  Death: "D",
+};
+
+const FOLLOW_UP_OUTCOME_FULL: Record<Exclude<FollowUpOutcome, "">, string> = {
+  Continuing_treatment: "Continuing treatment",
+  Absent: "Absent",
+  Referred_hospital: "Referred to hospital",
+  Refused_case: "Refused referral",
+  Defaulted: "Defaulted",
+  Recovered: "Recovered",
+  Death: "Death",
+};
+
+function weekHasVisitContent(week: WeekData): boolean {
+  return (
+    week.weight !== null ||
+    week.muac !== null ||
+    week.height !== null ||
+    week.supplements.trim().length > 0 ||
+    week.interventions.some(
+      (row) =>
+        row.dose.trim().length > 0 ||
+        row.frequency.trim().length > 0 ||
+        row.duration.trim().length > 0 ||
+        row.notes.trim().length > 0,
+    ) ||
+    week.edemaGrade !== "None"
+  );
+}
+
+/**
+ * Returns latest effective follow-up disposition.
+ * - Manual entries are respected.
+ * - If trailing slots are blank after prior activity: auto AP (>=1 missed) / DEF (>=3 missed).
+ * - If latest slot has visit data but no explicit outcome: auto SP.
+ */
+export function getLatestFollowUpOutcome(
+  patient: Pick<Patient, "treatmentWeeks">,
+): FollowUpOutcome {
+  const weeks = patient.treatmentWeeks ?? [];
+  if (weeks.length === 0) return "";
+  const hasAnyActivity = weeks.some((w) => weekHasVisitContent(w) || (w.followUpOutcome ?? "") !== "");
+  if (!hasAnyActivity) return "";
+
+  let missed = 0;
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    const week = weeks[i]!;
+    const outcome = week.followUpOutcome ?? "";
+    const hasVisit = weekHasVisitContent(week);
+
+    if (hasVisit) {
+      if (outcome && outcome !== "Absent") return outcome;
+      if (missed >= 3) return "Defaulted";
+      if (missed >= 1) return "Absent";
+      return outcome || "Continuing_treatment";
+    }
+
+    if (outcome === "") {
+      missed += 1;
+      continue;
+    }
+    if (outcome === "Absent") {
+      missed += 1;
+      continue;
+    }
+    if (outcome === "Defaulted") return "Defaulted";
+    return outcome;
+  }
+  if (missed >= 3) return "Defaulted";
+  if (missed >= 1) return "Absent";
+  return "";
+}
+
+/** Short code used in compact tables (SP/AP/REF/RR/DEF/C/D). */
+export function formatFollowUpOutcomeShort(outcome: FollowUpOutcome): string {
+  if (!outcome) return "—";
+  return FOLLOW_UP_OUTCOME_SHORT[outcome] ?? "—";
+}
+
+/** Full English outcome text used in profile/details screens. */
+export function formatFollowUpOutcomeFull(outcome: FollowUpOutcome): string {
+  if (!outcome) return "—";
+  return FOLLOW_UP_OUTCOME_FULL[outcome] ?? "—";
+}
+
+export type WeightGainStatus = "Good" | "Moderate" | "Poor" | "—";
+
+export type WeightGainRateResult = {
+  rate: number | null;
+  status: WeightGainStatus;
+  days: number;
+  admissionWeight: number | null;
+  currentWeight: number | null;
+  admissionDate: string | null;
+  endDate: string | null;
+  outcome: FollowUpOutcome;
+  reason:
+    | "ok"
+    | "missing_dates"
+    | "missing_weights"
+    | "invalid_days"
+    | "insufficient_days"
+    | "invalid_admission_weight";
+  noWeightGain: boolean;
+};
+
+/** Default 12-week grid: height/length on weeks 4, 8, 12 (0-based indexes 3, 7, 11). */
 export const HEIGHT_CAPTURE_WEEK_INDEXES = [3, 7, 11] as const;
 
-export function isHeightCaptureWeekIndex(weekIndex: number): boolean {
-  return HEIGHT_CAPTURE_WEEK_INDEXES.includes(weekIndex as (typeof HEIGHT_CAPTURE_WEEK_INDEXES)[number]);
+/** Height capture milestones that fall inside the current plan length. */
+export function isHeightCaptureWeekIndex(weekIndex: number, gridLength: number = 12): boolean {
+  if (gridLength <= 0) return false;
+  const milestones = [3, 7, 11].filter((i) => i < gridLength);
+  if (milestones.length > 0) return milestones.includes(weekIndex);
+  return weekIndex === gridLength - 1;
 }
 
 export const WEEKLY_EDEMA_OPTIONS: { value: ClinicalEdemaGrade; label: string }[] = [
@@ -54,6 +172,33 @@ export type PatientRecordAttachment = {
   createdAt: string;
 };
 
+export type TreatmentInterventionRow = {
+  intervention: string;
+  dose: string;
+  frequency: string;
+  duration: string;
+  notes: string;
+};
+
+export const TREATMENT_INTERVENTION_BASES: ReadonlyArray<Pick<TreatmentInterventionRow, "intervention">> = [
+  { intervention: "Amoxicillin" },
+  { intervention: "Vitamin A" },
+  { intervention: "Folic acid" },
+  { intervention: "Zinc" },
+  { intervention: "B-Complex" },
+  { intervention: "Mebendazole / Albendazole" },
+];
+
+export function createDefaultTreatmentInterventions(): TreatmentInterventionRow[] {
+  return TREATMENT_INTERVENTION_BASES.map((x) => ({
+    intervention: x.intervention,
+    dose: "",
+    frequency: "",
+    duration: "",
+    notes: "",
+  }));
+}
+
 export type WeekData = {
   weight: number | null;
   muac: number | null;
@@ -65,7 +210,9 @@ export type WeekData = {
   zScore: number | null;
   supplements: string;
   followUpOutcome: FollowUpOutcome;
+  interventions: TreatmentInterventionRow[];
 };
+export type FollowUpInterval = "daily" | "weekly" | "biweekly";
 
 export type WeightTrendVsPrior = "up" | "down" | "flat" | "none";
 
@@ -103,6 +250,10 @@ export type Patient = {
   diagnosis: Diagnosis;
   governorate: string;
   district: string;
+  /** Program / project this patient belongs to. */
+  programId?: string;
+  /** Follow-up cadence that defines treatment plan slot labels and default slot count. */
+  followUpInterval?: FollowUpInterval;
   /** Nearest health center distance category. */
   healthCenterDistance?: HealthCenterDistance;
   familySize?: number | null;
@@ -120,6 +271,8 @@ export type Patient = {
   recordAttachments: PatientRecordAttachment[];
   lastVisitDate: string;
   createdAt: string;
+  /** Last time this patient record was edited (ISO). */
+  updatedAt?: string;
   treatmentWeeks: WeekData[];
   isDeceased: boolean;
   /** Date of death (YYYY-MM-DD). Meaningful when `isDeceased` is true. */
@@ -145,10 +298,13 @@ export function normalizePatientRecord(p: Patient | LegacyPatient): Patient {
   const { photoUrl: _legacyPhoto, ...rest } = legacy;
   void _legacyPhoto;
 
-  const baseWeeks = normalizeTreatmentWeeks(legacy);
+  const followUpResolved = resolvedFollowUpIntervalForPatient(legacy);
+  const legacyForWeeks: LegacyPatient = { ...legacy, followUpInterval: followUpResolved } as LegacyPatient;
+  const baseWeeks = normalizeTreatmentWeeks(legacyForWeeks);
   const medicalHistory = mergeMedicalHistory(rest.medicalHistory);
   const clinicalForBootstrap = medicalHistory.clinicalEdemaGrade ?? "None";
   const hasAnyWeeklyEdema = baseWeeks.some((w) => w.edemaGrade !== "None");
+  const updatedRaw = (rest as Partial<Patient>).updatedAt;
   /** Copy clinical grade into every week when the grid had no edema yet (legacy / medical-only records). */
   const treatmentWeeks =
     !hasAnyWeeklyEdema && clinicalForBootstrap !== "None"
@@ -158,6 +314,8 @@ export function normalizePatientRecord(p: Patient | LegacyPatient): Patient {
   const merged: Patient = {
     ...(rest as Patient),
     treatmentWeeks,
+    programId: rest.programId ?? defaultProgramIdForAge(rest.ageMonths ?? 0),
+    followUpInterval: normalizeFollowUpInterval(followUpResolved),
     profilePhotoDataUrl:
       rest.profilePhotoDataUrl !== undefined && rest.profilePhotoDataUrl !== ""
         ? rest.profilePhotoDataUrl
@@ -169,12 +327,48 @@ export function normalizePatientRecord(p: Patient | LegacyPatient): Patient {
     firstVisitDate: rest.firstVisitDate ?? rest.createdAt ?? "",
     immunizationsComplete: rest.immunizationsComplete ?? null,
     dateOfDeath: (rest as Patient).dateOfDeath,
+    updatedAt:
+      typeof updatedRaw === "string" && updatedRaw.trim()
+        ? updatedRaw
+        : rest.lastVisitDate || rest.createdAt || new Date().toISOString(),
     medicalHistory,
   };
   return syncPatientAnthropometryFromTreatmentWeeks(merged);
 }
 
 export const TREATMENT_WEEKS_COUNT = 12;
+export const DEFAULT_SLOTS_BY_INTERVAL: Record<FollowUpInterval, number> = {
+  daily: 7,
+  weekly: 4,
+  biweekly: 4,
+};
+
+export function normalizeFollowUpInterval(v: string | undefined | null): FollowUpInterval {
+  if (v === "daily" || v === "weekly" || v === "biweekly") return v;
+  return "weekly";
+}
+
+/** Use program cadence when the patient record has no explicit follow-up interval. */
+function resolvedFollowUpIntervalForPatient(legacy: LegacyPatient): FollowUpInterval {
+  const p = legacy as Patient;
+  if (p.followUpInterval === "daily" || p.followUpInterval === "weekly" || p.followUpInterval === "biweekly") {
+    return p.followUpInterval;
+  }
+  const pid = p.programId;
+  if (pid) {
+    const prog = loadPrograms().find((g) => g.id === pid);
+    if (prog && (prog.followUpInterval === "daily" || prog.followUpInterval === "weekly" || prog.followUpInterval === "biweekly")) {
+      return prog.followUpInterval;
+    }
+  }
+  return "weekly";
+}
+
+function defaultProgramIdForAge(ageMonths: number): string {
+  if (ageMonths < 24) return "0-2";
+  if (ageMonths < 60) return "2-5";
+  return "5-18";
+}
 
 export const GOVERNORATES: Record<string, string[]> = {
   "Sana'a": ["Old City", "Shu'ub", "Bani Hashish", "Sanhan", "Hamdan", "Manakhah"],
@@ -295,6 +489,7 @@ function makeWeek(
   muac: number,
   edema: boolean,
   weekIndex: number,
+  gridLength: number = 12,
 ): WeekData {
   const wAdj = weight + weekIndex * (0.1 + Math.random() * 0.15);
   const mAdj = muac + weekIndex * (0.05 + Math.random() * 0.1);
@@ -304,12 +499,13 @@ function makeWeek(
     muac: parseFloat(mAdj.toFixed(1)),
     edemaGrade: weekIndex <= 1 && edema ? "+" : "None",
     rutf,
-    height: isHeightCaptureWeekIndex(weekIndex)
+    height: isHeightCaptureWeekIndex(weekIndex, gridLength)
       ? Math.round(lengthHeightCm + weekIndex * 0.2)
       : null,
     zScore: null,
     supplements: "Vit A + Zinc",
     followUpOutcome: weekIndex >= 1 ? "Continuing_treatment" : "",
+    interventions: createDefaultTreatmentInterventions(),
   };
 }
 
@@ -318,6 +514,18 @@ function sanitizeWeekFromStorage(raw: Partial<WeekData> & { edema?: boolean }): 
   let edemaGrade: ClinicalEdemaGrade = "None";
   if (g === "+" || g === "++" || g === "+++" || g === "None") edemaGrade = g;
   else if (raw.edema === true) edemaGrade = "+";
+  const interventions = Array.isArray(raw.interventions)
+    ? raw.interventions
+      .map((r) => (r && typeof r === "object" ? (r as Partial<TreatmentInterventionRow>) : null))
+      .filter((r): r is Partial<TreatmentInterventionRow> => Boolean(r))
+      .map((row) => ({
+        intervention: typeof row.intervention === "string" ? row.intervention : "",
+        dose: typeof row.dose === "string" ? row.dose : "",
+        frequency: typeof row.frequency === "string" ? row.frequency : "",
+        duration: typeof row.duration === "string" ? row.duration : "",
+        notes: typeof row.notes === "string" ? row.notes : "",
+      }))
+    : createDefaultTreatmentInterventions();
   return {
     weight: raw.weight ?? null,
     muac: raw.muac ?? null,
@@ -327,6 +535,7 @@ function sanitizeWeekFromStorage(raw: Partial<WeekData> & { edema?: boolean }): 
     zScore: raw.zScore ?? null,
     supplements: raw.supplements ?? "",
     followUpOutcome: (raw.followUpOutcome ?? "") as FollowUpOutcome,
+    interventions,
   };
 }
 
@@ -340,6 +549,7 @@ export function createEmptyWeekData(): WeekData {
     zScore: null,
     supplements: "",
     followUpOutcome: "",
+    interventions: createDefaultTreatmentInterventions(),
   };
 }
 
@@ -350,9 +560,35 @@ export function weekHasMeaningfulData(week: WeekData): boolean {
     week.muac !== null ||
     week.height !== null ||
     week.supplements.trim().length > 0 ||
+    week.interventions.some(
+      (row) =>
+        row.dose.trim().length > 0 ||
+        row.frequency.trim().length > 0 ||
+        row.duration.trim().length > 0 ||
+        row.notes.trim().length > 0,
+    ) ||
     (week.followUpOutcome ?? "") !== "" ||
     week.edemaGrade !== "None"
   );
+}
+
+/**
+ * Ensures at least `minSlots` and every week up through the last with data.
+ * Also keeps the stored grid length so user-added empty follow-up slots are not dropped on save/normalize.
+ */
+function trimTreatmentWeeksLength(weeks: WeekData[], minSlots: number): WeekData[] {
+  let lastMeaningful = -1;
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    if (weekHasMeaningfulData(weeks[i]!)) {
+      lastMeaningful = i;
+      break;
+    }
+  }
+  const need = Math.max(minSlots, lastMeaningful + 1, weeks.length);
+  const sliced = weeks.slice(0, need);
+  const out = [...sliced];
+  while (out.length < minSlots) out.push(createEmptyWeekData());
+  return out;
 }
 
 function latestNumericWeekValue(weeks: WeekData[], pick: (w: WeekData) => number | null): number | null {
@@ -361,6 +597,43 @@ function latestNumericWeekValue(weeks: WeekData[], pick: (w: WeekData) => number
     if (v != null && !Number.isNaN(v)) return v;
   }
   return null;
+}
+
+function earliestNumericWeekValue(weeks: WeekData[], pick: (w: WeekData) => number | null): number | null {
+  for (let i = 0; i < weeks.length; i++) {
+    const v = pick(weeks[i]!);
+    if (v != null && !Number.isNaN(v)) return v;
+  }
+  return null;
+}
+
+function lastIndexWhere<T>(arr: T[], pred: (x: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) if (pred(arr[i]!)) return i;
+  return -1;
+}
+
+function parseDateOnly(v?: string | null): Date | null {
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function addDays(date: Date, days: number): Date {
+  const d = new Date(date.getTime());
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function formatDateIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function followUpIntervalDays(v: FollowUpInterval | undefined): number {
+  const n = normalizeFollowUpInterval(v);
+  if (n === "daily") return 1;
+  if (n === "biweekly") return 14;
+  return 7;
 }
 
 const EDEMA_GRADE_RANK: Record<ClinicalEdemaGrade, number> = {
@@ -420,7 +693,7 @@ export function patientHasClinicalEdema(
   return patientHasAdmissionEdemaOnly(p) || patientHasWeeklyEdemaPlus(p);
 }
 
-/** Directory / export: worst weekly grade, else medical history grade, else legacy boolean as "+"/لا. */
+/** Directory / export: worst weekly grade, else medical history grade, else legacy boolean as "+"/"No". */
 export function formatEdemaForTable(
   p: Pick<Patient, "medicalHistory" | "edema" | "treatmentWeeks">,
 ): string {
@@ -428,7 +701,7 @@ export function formatEdemaForTable(
   if (ww !== "None") return ww;
   const g = p.medicalHistory?.clinicalEdemaGrade ?? "None";
   if (g !== "None") return g;
-  return p.edema ? "+" : "لا";
+  return p.edema ? "+" : "No";
 }
 
 /** Weight / height / MUAC from the latest week that recorded each value; falls back to profile fields. */
@@ -461,8 +734,156 @@ export function getPatientDerivedAnthropometry(patient: Patient): {
     weight > 0 && height > 0 ? calcWFHValue(weight, height) : patient.wfh;
   const zScore =
     patient.ageMonths >= 6 && muac > 0 ? calcZScoreFromMuac(muac) : patient.zScore;
-  const diagnosis = calcDiagnosisFromMuac(muac, patientHasClinicalEdema(patient));
+  const hasRecoveredOutcome = weeks.some((w) => w.followUpOutcome === "Recovered");
+  const diagnosis = hasRecoveredOutcome
+    ? ("Recovered" as Diagnosis)
+    : calcDiagnosisFromMuac(muac, patientHasClinicalEdema(patient));
   return { weight, height, muac, wfh, zScore, diagnosis };
+}
+
+/**
+ * Standard outpatient nutrition KPI:
+ * Weight Gain Rate (g/kg/day) = ((current - admission) * 1000) / (admission * days)
+ *
+ * End date policy:
+ * - Recovered: date at recovered slot (fallback: lastVisitDate)
+ * - Defaulted: date at latest attended slot (fallback: lastVisitDate)
+ * - Otherwise (ongoing): today
+ */
+export function getPatientWeightGainRate(
+  patient: Pick<
+    Patient,
+    "treatmentWeeks" | "firstVisitDate" | "createdAt" | "lastVisitDate" | "followUpInterval"
+  >,
+): WeightGainRateResult {
+  const weeks = patient.treatmentWeeks ?? [];
+  const outcome = getLatestFollowUpOutcome(patient);
+  const admissionWeight = earliestNumericWeekValue(weeks, (w) => w.weight);
+  const currentWeight = latestNumericWeekValue(weeks, (w) => w.weight);
+  if (admissionWeight == null || currentWeight == null) {
+    return {
+      rate: null,
+      status: "—",
+      days: 0,
+      admissionWeight,
+      currentWeight,
+      admissionDate: null,
+      endDate: null,
+      outcome,
+      reason: "missing_weights",
+      noWeightGain: false,
+    };
+  }
+  if (admissionWeight <= 0) {
+    return {
+      rate: null,
+      status: "—",
+      days: 0,
+      admissionWeight,
+      currentWeight,
+      admissionDate: null,
+      endDate: null,
+      outcome,
+      reason: "invalid_admission_weight",
+      noWeightGain: false,
+    };
+  }
+
+  const admissionDateBase = parseDateOnly(patient.firstVisitDate) ?? parseDateOnly(patient.createdAt);
+  if (!admissionDateBase) {
+    return {
+      rate: null,
+      status: "—",
+      days: 0,
+      admissionWeight,
+      currentWeight,
+      admissionDate: null,
+      endDate: null,
+      outcome,
+      reason: "missing_dates",
+      noWeightGain: false,
+    };
+  }
+
+  const intervalDays = followUpIntervalDays(patient.followUpInterval);
+  const recoveredIdx = lastIndexWhere(weeks, (w) => w.followUpOutcome === "Recovered");
+  const latestVisitIdx = lastIndexWhere(weeks, (w) => weekHasVisitContent(w));
+  let endDateObj: Date | null = null;
+  if (outcome === "Recovered") {
+    endDateObj =
+      recoveredIdx >= 0
+        ? addDays(admissionDateBase, recoveredIdx * intervalDays)
+        : parseDateOnly(patient.lastVisitDate);
+  } else if (outcome === "Defaulted") {
+    endDateObj =
+      latestVisitIdx >= 0
+        ? addDays(admissionDateBase, latestVisitIdx * intervalDays)
+        : parseDateOnly(patient.lastVisitDate);
+  } else {
+    endDateObj = parseDateOnly(new Date().toISOString().split("T")[0]);
+  }
+  if (!endDateObj) {
+    return {
+      rate: null,
+      status: "—",
+      days: 0,
+      admissionWeight,
+      currentWeight,
+      admissionDate: formatDateIso(admissionDateBase),
+      endDate: null,
+      outcome,
+      reason: "missing_dates",
+      noWeightGain: false,
+    };
+  }
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const days = Math.round((endDateObj.getTime() - admissionDateBase.getTime()) / msPerDay);
+  if (!Number.isFinite(days) || days < 0) {
+    return {
+      rate: null,
+      status: "—",
+      days: 0,
+      admissionWeight,
+      currentWeight,
+      admissionDate: formatDateIso(admissionDateBase),
+      endDate: formatDateIso(endDateObj),
+      outcome,
+      reason: "invalid_days",
+      noWeightGain: false,
+    };
+  }
+  if (days < 3) {
+    return {
+      rate: null,
+      status: "—",
+      days,
+      admissionWeight,
+      currentWeight,
+      admissionDate: formatDateIso(admissionDateBase),
+      endDate: formatDateIso(endDateObj),
+      outcome,
+      reason: "insufficient_days",
+      noWeightGain: currentWeight <= admissionWeight,
+    };
+  }
+
+  const rateRaw = ((currentWeight - admissionWeight) * 1000) / (admissionWeight * days);
+  const rate = Number.isFinite(rateRaw) ? parseFloat(rateRaw.toFixed(1)) : null;
+  const status: WeightGainStatus =
+    rate == null ? "—" : rate > 8 ? "Good" : rate >= 5 ? "Moderate" : "Poor";
+  return {
+    rate,
+    status,
+    days,
+    admissionWeight,
+    currentWeight,
+    admissionDate: formatDateIso(admissionDateBase),
+    endDate: formatDateIso(endDateObj),
+    outcome,
+    reason: "ok",
+    noWeightGain: currentWeight <= admissionWeight,
+  };
 }
 
 /** Copies latest weekly vitals onto the patient profile so charts, exports, and tabs stay aligned. */
@@ -545,17 +966,17 @@ export function totalProgramRutfSachets(
 }
 
 function normalizeTreatmentWeeks(patient: LegacyPatient): WeekData[] {
+  const minSlots = DEFAULT_SLOTS_BY_INTERVAL[normalizeFollowUpInterval((patient as Patient).followUpInterval)];
   if (Array.isArray(patient.treatmentWeeks)) {
     const normalized = patient.treatmentWeeks
-      .slice(0, TREATMENT_WEEKS_COUNT)
       .map((week) =>
         sanitizeWeekFromStorage({ ...createEmptyWeekData(), ...(week as Partial<WeekData> & { edema?: boolean }) }),
       );
 
-    while (normalized.length < TREATMENT_WEEKS_COUNT) {
+    while (normalized.length < minSlots) {
       normalized.push(createEmptyWeekData());
     }
-    return normalized;
+    return trimTreatmentWeeksLength(normalized, minSlots);
   }
 
   const legacyWeeks = [patient.week1, patient.week2, patient.week3, patient.week4]
@@ -564,11 +985,11 @@ function normalizeTreatmentWeeks(patient: LegacyPatient): WeekData[] {
       sanitizeWeekFromStorage({ ...createEmptyWeekData(), ...(week as Partial<WeekData> & { edema?: boolean }) }),
     );
 
-  while (legacyWeeks.length < TREATMENT_WEEKS_COUNT) {
+  while (legacyWeeks.length < minSlots) {
     legacyWeeks.push(createEmptyWeekData());
   }
 
-  return legacyWeeks;
+  return trimTreatmentWeeksLength(legacyWeeks, minSlots);
 }
 
 /** Short numeric id for tables (1 … 99999). */
@@ -603,7 +1024,10 @@ export function nextSequentialPatientId(patients: Patient[]): string {
 }
 
 /** Blank patient row for the 4-tab chart (add flow). Caller supplies `id` from `nextSequentialPatientId`. */
-export function createDraftPatient(id: string): Patient {
+export function createDraftPatient(
+  id: string,
+  opts?: { programId?: string; followUpInterval?: FollowUpInterval },
+): Patient {
   const today = new Date().toISOString().split("T")[0];
   const defaultGov = "Sana'a";
   const defaultDist = GOVERNORATES[defaultGov][0];
@@ -634,6 +1058,8 @@ export function createDraftPatient(id: string): Patient {
     diagnosis,
     governorate: defaultGov,
     district: defaultDist,
+    programId: opts?.programId ?? defaultProgramIdForAge(calcAgeMonthsFromDob(dob)),
+    followUpInterval: normalizeFollowUpInterval(opts?.followUpInterval),
     symptoms: [],
     milk: "F75",
     dose: `${doseVal} sachets/day`,
@@ -643,7 +1069,10 @@ export function createDraftPatient(id: string): Patient {
     recordAttachments: [],
     lastVisitDate: today,
     createdAt: today,
-    treatmentWeeks: Array.from({ length: TREATMENT_WEEKS_COUNT }, () => createEmptyWeekData()),
+    treatmentWeeks: Array.from(
+      { length: DEFAULT_SLOTS_BY_INTERVAL[normalizeFollowUpInterval(opts?.followUpInterval)] },
+      () => createEmptyWeekData(),
+    ),
     isDeceased: false,
   });
 }
@@ -677,6 +1106,8 @@ function generatePatients(): Patient[] {
       diagnosis,
       governorate: d.gov,
       district: d.dist,
+      programId: defaultProgramIdForAge(age),
+      followUpInterval: "weekly",
       symptoms: SYMPTOM_SETS[i % SYMPTOM_SETS.length],
       milk: MILKS[i % MILKS.length],
       dose: `${rutf} sachets/day`,
@@ -687,13 +1118,10 @@ function generatePatients(): Patient[] {
       lastVisitDate: lastVisit.toISOString().split("T")[0],
       createdAt: created.toISOString().split("T")[0],
       treatmentWeeks: [
-        makeWeek(d.weight, d.height, d.muac, d.edema, 0),
-        makeWeek(d.weight, d.height, d.muac, d.edema, 1),
-        makeWeek(d.weight, d.height, d.muac, d.edema, 2),
-        makeWeek(d.weight, d.height, d.muac, d.edema, 3),
-        ...Array.from({ length: TREATMENT_WEEKS_COUNT - 4 }, () =>
-          createEmptyWeekData(),
-        ),
+        makeWeek(d.weight, d.height, d.muac, d.edema, 0, 4),
+        makeWeek(d.weight, d.height, d.muac, d.edema, 1, 4),
+        makeWeek(d.weight, d.height, d.muac, d.edema, 2, 4),
+        makeWeek(d.weight, d.height, d.muac, d.edema, 3, 4),
       ],
       isDeceased: d.deceased,
       dateOfDeath: d.deceased ? lastVisit.toISOString().split("T")[0] : undefined,
@@ -709,11 +1137,10 @@ export function loadPatients(): Patient[] {
     if (stored) {
       const parsed = JSON.parse(stored) as LegacyPatient[];
       let migrated = parsed.map((patient) => {
-        const normalizedWeeks = normalizeTreatmentWeeks(patient);
         const { week1, week2, week3, week4, ...rest } = patient;
         return normalizePatientRecord({
           ...rest,
-          treatmentWeeks: normalizedWeeks,
+          treatmentWeeks: patient.treatmentWeeks,
         } as Patient);
       });
 

@@ -8,6 +8,8 @@ import {
   patientHasClinicalEdema,
   patientHasWeeklyEdemaPlus,
   syncPatientAnthropometryFromTreatmentWeeks,
+  getLatestFollowUpOutcome,
+  formatFollowUpOutcomeFull,
 } from "@/lib/data";
 import { assertImageFileSize, fileToDisplayableDataUrl, getPatientAvatarUrl } from "@/lib/patientImages";
 import {
@@ -46,7 +48,7 @@ const tabs: { id: ProfileTab; label: string; icon: typeof User }[] = [
   { id: "personal", label: "Personal", icon: User },
   { id: "medical", label: "Medical history", icon: FileText },
   { id: "anthropometric", label: "Anthropometric", icon: Ruler },
-  { id: "treatment", label: "Treatment (12 wk)", icon: CalendarCheck },
+  { id: "treatment", label: "Treatment Plan", icon: CalendarCheck },
 ];
 
 export default function PatientDetailModal({ patient: p, isNew = false, onSave, onClose }: Props) {
@@ -59,9 +61,16 @@ export default function PatientDetailModal({ patient: p, isNew = false, onSave, 
 
   useEffect(() => {
     setLocalPatient(normalizePatientRecord(p));
+    setSelectedWeek(0);
     setFormError(null);
     setProfileUploadErr(null);
   }, [p.id, isNew]);
+
+  useEffect(() => {
+    const len = localPatient.treatmentWeeks.length;
+    if (len === 0) return;
+    setSelectedWeek((w) => Math.min(w, len - 1));
+  }, [localPatient.treatmentWeeks.length]);
 
   async function onHeaderProfilePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -132,6 +141,8 @@ export default function PatientDetailModal({ patient: p, isNew = false, onSave, 
   const isTreatmentReadOnly = localPatient.isDeceased;
   /** Protocol lock while edema exists: only specific personal fields + edema fields remain editable. */
   const edemaProtocolLock = patientHasClinicalEdema(localPatient) && !localPatient.isDeceased;
+  const latestOutcome = useMemo(() => getLatestFollowUpOutcome(localPatient), [localPatient.treatmentWeeks]);
+  const latestOutcomeLabel = formatFollowUpOutcomeFull(latestOutcome);
 
   function handleSaveTreatmentWeek() {
     const err = validateMinimal();
@@ -225,6 +236,9 @@ export default function PatientDetailModal({ patient: p, isNew = false, onSave, 
                   className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getDiagnosisColor(localPatient.diagnosis)}`}
                 >
                   {localPatient.diagnosis}
+                </span>
+                <span className="inline-flex items-center rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium text-foreground">
+                  Follow-up: {latestOutcomeLabel}
                 </span>
               </div>
             </div>
